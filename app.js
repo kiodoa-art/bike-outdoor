@@ -1,6 +1,7 @@
 import { createSensorManager } from './sensors.js';
 import { createGpsTracker } from './gps.js';
 import { createRideMap } from './map.js';
+import { parseGpxRoute, getRouteStatus, makeRouteMeta } from './route.js';
 import * as storage from './storage.js';
 import * as ui from './ui.js';
 import { buildRideJson, downloadRideJson } from './export.js';
@@ -29,13 +30,15 @@ function freshRide() {
     currentHeartRate: null,
     currentSpeedKmh: null,
     gpsAccuracy: null,
+    currentAltitude: null,
     lastLat: null,
     lastLon: null,
     avgPower: null,
     maxPower: null,
     samples: [],
     laps: [],
-    routePoints: [] // {lat, lon} for map redraw on resume
+    routePoints: [], // actual ridden GPS points for map redraw on resume
+    plannedRoute: null
   };
 }
 
@@ -68,20 +71,25 @@ const sensors = createSensorManager({
 const gps = createGpsTracker({
   onFix: (fix) => {
     ride.gpsAccuracy = fix.accuracy;
+    ride.currentAltitude = fix.altitude;
     ride.lastLat = fix.lat;
     ride.lastLon = fix.lon;
     lastFixTimestamp = fix.timestamp;
 
+    const speedMs = Number.isFinite(fix.speedMs) ? fix.speedMs : null;
+    ride.currentSpeedKmh = speedMs !== null ? speedMs * 3.6 : ride.currentSpeedKmh;
+
     if (ride.rideState === 'recording') {
       ride.distanceMeters = fix.totalDistanceM;
       ride.elevationGainMeters = fix.elevationGainM;
-      const speedMs = Number.isFinite(fix.speedMs) ? fix.speedMs : null;
-      ride.currentSpeedKmh = speedMs !== null ? speedMs * 3.6 : ride.currentSpeedKmh;
       ride.routePoints.push({ lat: fix.lat, lon: fix.lon });
-      if (rideMap.isReady()) rideMap.addPoint(fix.lat, fix.lon);
+      if (rideMap.isReady()) rideMap.addTrackPoint(fix.lat, fix.lon);
     } else if (rideMap.isReady()) {
-      rideMap.addPoint(fix.lat, fix.lon);
+      // Do not draw pre-ride GPS fixes as a ridden route. Only move the marker.
+      rideMap.setPosition(fix.lat, fix.lon);
     }
+
+    updateRouteUi();
   },
   onStateChange: (state) => {
     if (state === 'locked') ui.setStatusChip('statusGps', 'ok', 'LÅST');
@@ -92,6 +100,82 @@ const gps = createGpsTracker({
 
 // ---------------- Map ----------------
 const rideMap = createRideMap('mapEl');
+let activeRoute = null;
+
+
+// ---------------- GPX planned route ----------------
+function formatKm(meters, decimals = 1) {
+  if (!Number.isFinite(meters)) return '-- km';
+  return `${(meters / 1000).toFixed(decimals)} km`;
+}
+
+function formatMeters(meters) {
+  if (!Number.isFinite(meters)) return '--';
+  if (meters >= 1000) return `${(meters / 1000).toFixed(1)} km`;
+  return `${Math.round(meters)} m`;
+}
+
+function updateRouteUi() {
+  const routeStatusEl = $('routeStatus');
+  const routeRow = $('mapRouteRow');
+
+  if (!activeRoute) {
+    if (routeStatusEl) routeStatusEl.textContent = 'Ingen rute';
+    $('mapInfoTitle').textContent = ride.rideState === 'recording' ? 'Sporer tur' : 'Klar til GPS';
+    $('mapInfoSubtitle').textContent = 'Indlæs GPX for at følge en planlagt rute';
+    routeRow.hidden = true;
+    return;
+  }
+
+  if (routeStatusEl) {
+    routeStatusEl.textContent = `${activeRoute.name} · ${formatKm(activeRoute.totalDistanceMeters)}`;
+  }
+
+  const status = getRouteStatus(activeRoute, ride.lastLat, ride.lastLon);
+  $('mapInfoTitle').textContent = activeRoute.name || 'GPX-rute';
+
+  if (!status) {
+    $('mapInfoSubtitle').textContent = `${formatKm(activeRoute.totalDistanceMeters)} planlagt rute`;
+    $('routeRemaining').textContent = `Til slut ${formatKm(activeRoute.totalDistanceMeters)}`;
+    $('routeDeviation').textContent = 'Venter på GPS';
+    routeRow.hidden = false;
+    return;
+  }
+
+  const offRouteText = status.onRoute ? 'På rute' : `${formatMeters(status.nearestDistanceMeters)} fra rute`;
+  $('mapInfoSubtitle').textContent = `${Math.round(status.progressPercent)}% af ruten · ${offRouteText}`;
+  $('routeRemaining').textContent = `Til slut ${formatMeters(status.remainingMeters)}`;
+  $('routeDeviation').textContent = offRouteText;
+  routeRow.hidden = false;
+}
+
+async function loadGpxFromFile(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const route = parseGpxRoute(text, file.name.replace(/\.gpx$/i, ''));
+    activeRoute = route;
+    if (ride.rideState === 'recording' || ride.rideState === 'paused') ride.plannedRoute = makeRouteMeta(route);
+    await storage.savePlannedRoute(route);
+    if (rideMap.isReady()) rideMap.setPlannedRoute(route);
+    updateRouteUi();
+    ui.hideModal('settingsDrawer');
+    ui.showToast(`GPX-rute indlæst: ${formatKm(route.totalDistanceMeters)}`);
+  } catch (err) {
+    ui.showToast(err?.message || 'Kunne ikke læse GPX-ruten');
+  } finally {
+    $('gpxFileInput').value = '';
+  }
+}
+
+async function clearActiveRoute() {
+  activeRoute = null;
+  if (ride.rideState === 'recording' || ride.rideState === 'paused') ride.plannedRoute = null;
+  await storage.clearPlannedRoute();
+  if (rideMap.isReady()) rideMap.clearPlannedRoute();
+  updateRouteUi();
+  ui.showToast('GPX-rute fjernet');
+}
 
 // ---------------- Ride lifecycle ----------------
 function startRide() {
@@ -99,6 +183,8 @@ function startRide() {
   ride.rideState = 'recording';
   ride.startTime = new Date().toISOString();
   ride.rideId = `ride-${ride.startTime.replace(/[:.]/g, '-')}-outdoor`;
+  ride.plannedRoute = makeRouteMeta(activeRoute);
+  rideMap.clearTrack();
 
   document.body.dataset.rideActive = '1';
   $('startBtn').hidden = true;
@@ -156,7 +242,7 @@ function recordSample(isPaused) {
     distanceMeters: ride.distanceMeters,
     lat: ride.lastLat,
     lon: ride.lastLon,
-    altitude: null,
+    altitude: ride.currentAltitude,
     gpsAccuracy: ride.gpsAccuracy,
     isPaused: !!isPaused
   };
@@ -267,7 +353,8 @@ function resumeSavedRide(saved) {
   gps.start();
   ui.requestWakeLock();
 
-  if (rideMap.isReady() && ride.routePoints?.length) rideMap.loadPoints(ride.routePoints);
+  if (activeRoute && rideMap.isReady()) rideMap.setPlannedRoute(activeRoute);
+  if (rideMap.isReady() && ride.routePoints?.length) rideMap.loadTrackPoints(ride.routePoints);
 
   tickTimer = setInterval(tick, 1000);
   ui.hideModal('recoveryModal');
@@ -310,6 +397,15 @@ function initSettingsDrawer() {
   });
   $('autoPauseToggle').addEventListener('change', (e) => { settings.autoPause = e.target.checked; });
 
+  $('importGpxBtn').addEventListener('click', () => $('gpxFileInput').click());
+  $('gpxFileInput').addEventListener('change', (e) => loadGpxFromFile(e.target.files?.[0]));
+  $('fitRouteBtn').addEventListener('click', () => {
+    if (!activeRoute) { ui.showToast('Ingen GPX-rute indlæst'); return; }
+    rideMap.fitPlannedRoute();
+    ui.hideModal('settingsDrawer');
+  });
+  $('clearRouteBtn').addEventListener('click', clearActiveRoute);
+
   $('exportLastBtn').addEventListener('click', async () => {
     const last = await storage.loadLastRide();
     if (!last) { ui.showToast('Ingen gemt tur endnu'); return; }
@@ -350,6 +446,9 @@ async function boot() {
   initControls();
 
   rideMap.init();
+  activeRoute = await storage.loadPlannedRoute();
+  if (activeRoute && rideMap.isReady()) rideMap.setPlannedRoute(activeRoute);
+  updateRouteUi();
   gps.start(); // pre-ride GPS lock search
   if (!sensors.isBleSupported()) {
     ui.setStatusChip('statusPower', 'error', 'INTET BLE');

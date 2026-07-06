@@ -77,3 +77,16 @@ export async function saveLastRide(rideJson) {
 export async function loadLastRide() {
   try { return await idbGet('lastRide'); } catch { return null; }
 }
+
+
+export async function savePlannedRoute(route) {
+  try { await idbPut('plannedRoute', route); } catch { /* ignore */ }
+}
+
+export async function loadPlannedRoute() {
+  try { return await idbGet('plannedRoute'); } catch { return null; }
+}
+
+export async function clearPlannedRoute() {
+  try { await idbDelete('plannedRoute'); } catch { /* ignore */ }
+}

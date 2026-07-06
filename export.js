@@ -63,6 +63,7 @@ export function buildRideJson(ride) {
     movingTimeSec: round(movingTimeSec),
     distanceMeters: round(distanceMeters),
     elevationGainMeters: round(elevationGainMeters),
+    plannedRoute: ride.plannedRoute || null,
     summary,
     laps: laps || [],
     samples: samples.map(s => ({

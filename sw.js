@@ -2,7 +2,7 @@
 // Bump CACHE_NAME for every released build. New service workers take control immediately,
 // clear old caches, and refresh open app windows so GitHub Pages does not hang on old files.
 
-const CACHE_NAME = 'bike-outdoor-v2-color-map-force-update';
+const CACHE_NAME = 'bike-outdoor-v3-gpx-route-mockup-ui';
 const APP_SHELL = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const APP_SHELL = [
   './gps.js',
   './storage.js',
   './map.js',
+  './route.js',
   './export.js',
   './ui.js',
   './manifest.webmanifest',

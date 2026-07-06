@@ -134,10 +134,15 @@
         </button>
         <div class="map-info-card">
           <div class="map-info-title" id="mapInfoTitle">Sporer rute</div>
+          <div class="map-info-subtitle" id="mapInfoSubtitle">Indlæs GPX for at følge en planlagt rute</div>
           <div class="map-info-row">
             <span id="mapDistance">0.0 km</span>
             <span id="mapSpeed">0.0 km/h</span>
             <span id="mapAccuracy">GPS --</span>
+          </div>
+          <div class="map-route-row" id="mapRouteRow" hidden>
+            <span id="routeRemaining">Til slut --</span>
+            <span id="routeDeviation">Fra rute --</span>
           </div>
         </div>
       </div>
@@ -207,6 +212,22 @@
       <span>Auto-pause</span>
       <label class="switch"><input type="checkbox" id="autoPauseToggle" checked><span class="switch-track"></span></label>
     </div>
+
+    <div class="drawer-section-title">Rute</div>
+    <div class="drawer-row">
+      <span>GPX-rute</span>
+      <button id="importGpxBtn" class="btn-mini">Indlæs</button>
+    </div>
+    <div class="drawer-row">
+      <span>Aktiv rute</span>
+      <span id="routeStatus" class="drawer-value">Ingen rute</span>
+    </div>
+    <div class="drawer-row drawer-row-split">
+      <button id="fitRouteBtn" class="btn-mini">Vis hele ruten</button>
+      <button id="clearRouteBtn" class="btn-mini btn-mini-danger">Fjern rute</button>
+    </div>
+
+    <div class="drawer-section-title">Data</div>
     <div class="drawer-row">
       <span>Eksportér seneste tur</span>
       <button id="exportLastBtn" class="btn-mini">Eksportér</button>
@@ -272,6 +293,8 @@
     <button id="aboutCloseBtn" class="btn btn-lap">Luk</button>
   </div>
 </div>
+
+<input id="gpxFileInput" type="file" accept=".gpx,application/gpx+xml,text/xml,application/xml" hidden />
 
 <div id="toast" class="toast" hidden></div>
 
