@@ -25,7 +25,8 @@ function round(value, decimals = 0) {
 }
 
 export function buildRideJson(ride) {
-  const { rideId, startTime, endTime, durationSec, movingTimeSec, distanceMeters, elevationGainMeters, samples, laps } = ride;
+  const { rideId, startTime, endTime, movingTimeSec, distanceMeters, elevationGainMeters, samples, laps } = ride;
+  const durationSec = Number.isFinite(ride.durationSec) ? ride.durationSec : ride.elapsedSec;
 
   const powers = samples.map(s => s.power).filter(Number.isFinite);
   const hrs = samples.map(s => s.heartRate).filter(Number.isFinite);

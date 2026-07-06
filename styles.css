@@ -26,7 +26,15 @@
 }
 
 *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-html,body{ height:100%; }
+/* ============ GLOBAL VISIBILITY FIX ============
+   Hidden elements must stay hidden even when classes like .modal or .drawer set display:flex.
+   Without this, all modals/drawers are visible and buttons such as “Luk” appear broken. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body{ height:100%; }
 body{
   margin:0;
   background:var(--bg);
