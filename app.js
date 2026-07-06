@@ -1,184 +1,475 @@
-import { GPSTracker, haversineMeters } from './gps.js';
-import { PowerMeter, HeartRateMonitor } from './sensors.js';
-import { saveActiveRide, getActiveRide, clearActiveRide, saveLastRide, getLastRide, loadSettings, saveSettings } from './storage.js';
-import { buildRideJson, downloadRide } from './export.js';
-import { RideMap } from './map.js';
-import { renderMetrics, setConnection, setRideState, setupTabs, setupSettings, setupDimMode, showInfo } from './ui.js';
+import { createSensorManager } from './sensors.js';
+import { createGpsTracker } from './gps.js';
+import { createRideMap } from './map.js';
+import { parseGpxRoute, getRouteStatus, makeRouteMeta } from './route.js';
+import * as storage from './storage.js';
+import * as ui from './ui.js';
+import { buildRideJson, downloadRideJson } from './export.js';
 
-const $ = selector => document.querySelector(selector);
-const gps = new GPSTracker();
-const powerMeter = new PowerMeter();
-const hrMonitor = new HeartRateMonitor();
-const settings = loadSettings();
-const map = new RideMap($('#map'), $('#mapFallback'), $('#mapEmpty'));
-let wakeLock = null, ticker = null, autosaveTimer = null, lastGpsSample = null, lowSpeedSince = null, autoPaused = false;
+const $ = (id) => document.getElementById(id);
 
-let state = {
-  rideState: 'idle', rideId: null, startTime: null, elapsedSec: 0, movingTimeSec: 0,
-  distanceMeters: 0, elevationGainMeters: 0, power: null, heartRate: null, cadence: null,
-  speedKmh: 0, gpsAccuracy: null, samples: [], laps: [], lastAltitude: null,
-  histories: { heartRate: [], cadence: [], speed: [], power: [] }, avgPower: null, maxPower: null
-};
+const AUTOSAVE_INTERVAL_TICKS = 6; // ~6s at 1Hz
+const AUTO_PAUSE_SPEED_KMH = 2;
+const AUTO_PAUSE_TICKS = 8; // ~8s below threshold before auto-pausing
 
-function publicRideState() {
-  const { histories, ...ride } = state;
-  return ride;
-}
+let settings = { autoDim: true, autoPause: true };
 
-function newRide() {
-  const now = new Date();
-  const pad = value => String(value).padStart(2, '0');
+// ---------------- Ride state ----------------
+function freshRide() {
   return {
-    rideId: `ride-${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}-outdoor`,
-    startTime: now.toISOString(), elapsedSec: 0, movingTimeSec: 0, distanceMeters: 0,
-    elevationGainMeters: 0, samples: [], laps: [], lastAltitude: null
+    rideState: 'idle', // idle | recording | paused | stopped
+    rideId: null,
+    startTime: null,
+    endTime: null,
+    elapsedSec: 0,
+    movingTimeSec: 0,
+    distanceMeters: 0,
+    elevationGainMeters: 0,
+    currentPower: null,
+    currentCadence: null,
+    currentHeartRate: null,
+    currentSpeedKmh: null,
+    gpsAccuracy: null,
+    currentAltitude: null,
+    lastLat: null,
+    lastLon: null,
+    avgPower: null,
+    maxPower: null,
+    samples: [],
+    laps: [],
+    routePoints: [], // actual ridden GPS points for map redraw on resume
+    plannedRoute: null
   };
 }
 
-async function startRide(resume = null) {
-  if (gps.status !== 'on') {
-    const proceed = confirm('GPS har endnu ikke låst positionen. Vil du starte alligevel? Turen kan mangle de første rutepunkter.');
-    if (!proceed) return;
+let ride = freshRide();
+let tickTimer = null;
+let ticksSinceAutosave = 0;
+let belowSpeedTicks = 0;
+let lastFixTimestamp = null;
+
+// ---------------- Sensors ----------------
+const sensors = createSensorManager({
+  onPower: (w) => { ride.currentPower = w; },
+  onCadence: (c) => { ride.currentCadence = c; },
+  onHeartRate: (hr) => { ride.currentHeartRate = hr; },
+  onPowerStateChange: (state) => {
+    if (state === 'connected') ui.setStatusChip('statusPower', 'ok', 'CONNECT');
+    else if (state === 'connecting') ui.setStatusChip('statusPower', 'searching', 'FORBINDER');
+    else if (state === 'unsupported') ui.setStatusChip('statusPower', 'error', 'INTET BLE');
+    else ui.setStatusChip('statusPower', 'off', 'FRA');
+  },
+  onHrStateChange: (state) => {
+    if (state === 'connected') ui.setStatusChip('statusHr', 'ok', 'CONNECT');
+    else if (state === 'connecting') ui.setStatusChip('statusHr', 'searching', 'FORBINDER');
+    else if (state === 'unsupported') ui.setStatusChip('statusHr', 'error', 'INTET BLE');
+    else ui.setStatusChip('statusHr', 'off', 'FRA');
   }
-  state = { ...state, ...(resume || newRide()), rideState: resume?.rideState === 'paused' ? 'paused' : 'recording', histories: { heartRate: [], cadence: [], speed: [], power: [] } };
-  lastGpsSample = [...state.samples].reverse().find(sample => Number.isFinite(sample.lat)) || null;
-  setRideState(state.rideState); map.setRoute(state.samples.filter(sample => Number.isFinite(sample.lat)));
-  await requestWakeLock();
-  startTimers(); await persist(); render();
+});
+
+// ---------------- GPS ----------------
+const gps = createGpsTracker({
+  onFix: (fix) => {
+    ride.gpsAccuracy = fix.accuracy;
+    ride.currentAltitude = fix.altitude;
+    ride.lastLat = fix.lat;
+    ride.lastLon = fix.lon;
+    lastFixTimestamp = fix.timestamp;
+
+    const speedMs = Number.isFinite(fix.speedMs) ? fix.speedMs : null;
+    ride.currentSpeedKmh = speedMs !== null ? speedMs * 3.6 : ride.currentSpeedKmh;
+
+    if (ride.rideState === 'recording') {
+      ride.distanceMeters = fix.totalDistanceM;
+      ride.elevationGainMeters = fix.elevationGainM;
+      ride.routePoints.push({ lat: fix.lat, lon: fix.lon });
+      if (rideMap.isReady()) rideMap.addTrackPoint(fix.lat, fix.lon);
+    } else if (rideMap.isReady()) {
+      // Do not draw pre-ride GPS fixes as a ridden route. Only move the marker.
+      rideMap.setPosition(fix.lat, fix.lon);
+    }
+
+    updateRouteUi();
+  },
+  onStateChange: (state) => {
+    if (state === 'locked') ui.setStatusChip('statusGps', 'ok', 'LÅST');
+    else if (state === 'error') ui.setStatusChip('statusGps', 'error', 'FEJL');
+    else ui.setStatusChip('statusGps', 'searching', 'SØGER');
+  }
+});
+
+// ---------------- Map ----------------
+const rideMap = createRideMap('mapEl');
+let activeRoute = null;
+
+
+// ---------------- GPX planned route ----------------
+function formatKm(meters, decimals = 1) {
+  if (!Number.isFinite(meters)) return '-- km';
+  return `${(meters / 1000).toFixed(decimals)} km`;
 }
 
-function startTimers() {
-  clearInterval(ticker); clearInterval(autosaveTimer);
-  ticker = setInterval(sampleTick, 1000);
-  autosaveTimer = setInterval(persist, 7000);
+function formatMeters(meters) {
+  if (!Number.isFinite(meters)) return '--';
+  if (meters >= 1000) return `${(meters / 1000).toFixed(1)} km`;
+  return `${Math.round(meters)} m`;
 }
 
-function sampleTick() {
-  if (!['recording','paused'].includes(state.rideState)) return;
-  state.elapsedSec += 1;
-  const paused = state.rideState === 'paused';
-  if (!paused && (state.speedKmh > 1 || Number.isFinite(state.power))) state.movingTimeSec += 1;
-  const pos = gps.latest;
+function updateRouteUi() {
+  const routeStatusEl = $('routeStatus');
+  const routeRow = $('mapRouteRow');
+
+  if (!activeRoute) {
+    if (routeStatusEl) routeStatusEl.textContent = 'Ingen rute';
+    $('mapInfoTitle').textContent = ride.rideState === 'recording' ? 'Sporer tur' : 'Klar til GPS';
+    $('mapInfoSubtitle').textContent = 'Indlæs GPX for at følge en planlagt rute';
+    routeRow.hidden = true;
+    return;
+  }
+
+  if (routeStatusEl) {
+    routeStatusEl.textContent = `${activeRoute.name} · ${formatKm(activeRoute.totalDistanceMeters)}`;
+  }
+
+  const status = getRouteStatus(activeRoute, ride.lastLat, ride.lastLon);
+  $('mapInfoTitle').textContent = activeRoute.name || 'GPX-rute';
+
+  if (!status) {
+    $('mapInfoSubtitle').textContent = `${formatKm(activeRoute.totalDistanceMeters)} planlagt rute`;
+    $('routeRemaining').textContent = `Til slut ${formatKm(activeRoute.totalDistanceMeters)}`;
+    $('routeDeviation').textContent = 'Venter på GPS';
+    routeRow.hidden = false;
+    return;
+  }
+
+  const offRouteText = status.onRoute ? 'På rute' : `${formatMeters(status.nearestDistanceMeters)} fra rute`;
+  $('mapInfoSubtitle').textContent = `${Math.round(status.progressPercent)}% af ruten · ${offRouteText}`;
+  $('routeRemaining').textContent = `Til slut ${formatMeters(status.remainingMeters)}`;
+  $('routeDeviation').textContent = offRouteText;
+  routeRow.hidden = false;
+}
+
+async function loadGpxFromFile(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const route = parseGpxRoute(text, file.name.replace(/\.gpx$/i, ''));
+    activeRoute = route;
+    if (ride.rideState === 'recording' || ride.rideState === 'paused') ride.plannedRoute = makeRouteMeta(route);
+    await storage.savePlannedRoute(route);
+    if (rideMap.isReady()) rideMap.setPlannedRoute(route);
+    updateRouteUi();
+    ui.hideModal('settingsDrawer');
+    ui.showToast(`GPX-rute indlæst: ${formatKm(route.totalDistanceMeters)}`);
+  } catch (err) {
+    ui.showToast(err?.message || 'Kunne ikke læse GPX-ruten');
+  } finally {
+    $('gpxFileInput').value = '';
+  }
+}
+
+async function clearActiveRoute() {
+  activeRoute = null;
+  if (ride.rideState === 'recording' || ride.rideState === 'paused') ride.plannedRoute = null;
+  await storage.clearPlannedRoute();
+  if (rideMap.isReady()) rideMap.clearPlannedRoute();
+  updateRouteUi();
+  ui.showToast('GPX-rute fjernet');
+}
+
+// ---------------- Ride lifecycle ----------------
+function startRide() {
+  ride = freshRide();
+  ride.rideState = 'recording';
+  ride.startTime = new Date().toISOString();
+  ride.rideId = `ride-${ride.startTime.replace(/[:.]/g, '-')}-outdoor`;
+  ride.plannedRoute = makeRouteMeta(activeRoute);
+  rideMap.clearTrack();
+
+  document.body.dataset.rideActive = '1';
+  $('startBtn').hidden = true;
+  $('rideControls').hidden = false;
+  setPauseButtonLabel();
+
+  gps.reset();
+  gps.start();
+  ui.requestWakeLock().then((ok) => { if (!ok) ui.showToast('Wake lock ikke understøttet — skærmen kan gå i sleep'); });
+
+  tickTimer = setInterval(tick, 1000);
+  ui.showToast('Tur startet');
+}
+
+function tick() {
+  if (ride.rideState === 'recording') {
+    ride.elapsedSec += 1;
+
+    const speedKmh = ride.currentSpeedKmh;
+    const moving = Number.isFinite(speedKmh) ? speedKmh >= AUTO_PAUSE_SPEED_KMH : true;
+    if (moving) { ride.movingTimeSec += 1; belowSpeedTicks = 0; }
+    else {
+      belowSpeedTicks += 1;
+      if (settings.autoPause && belowSpeedTicks >= AUTO_PAUSE_TICKS) {
+        pauseRide(true);
+        return;
+      }
+    }
+
+    recordSample(false);
+  } else if (ride.rideState === 'paused') {
+    // still show live sensor values but do not accumulate ride time/distance
+  }
+
+  ui.renderLive(ride);
+  ui.pushSpark('Hr', ride.currentHeartRate);
+  ui.pushSpark('Cadence', ride.currentCadence);
+  ui.pushSpark('Speed', ride.currentSpeedKmh);
+
+  ticksSinceAutosave += 1;
+  if (ticksSinceAutosave >= AUTOSAVE_INTERVAL_TICKS) {
+    ticksSinceAutosave = 0;
+    autosave();
+  }
+}
+
+function recordSample(isPaused) {
   const sample = {
-    timestamp: new Date().toISOString(), elapsedSec: state.elapsedSec,
-    power: state.power, heartRate: state.heartRate, cadence: state.cadence,
-    speedKmh: state.speedKmh, distanceMeters: state.distanceMeters,
-    lat: pos?.lat ?? null, lon: pos?.lon ?? null, altitude: pos?.altitude ?? null,
-    gpsAccuracy: pos?.accuracy ?? null, heading: pos?.heading ?? null, isPaused: paused
+    t: ride.elapsedSec,
+    timestamp: new Date().toISOString(),
+    power: ride.currentPower,
+    heartRate: ride.currentHeartRate,
+    cadence: ride.currentCadence,
+    speedKmh: ride.currentSpeedKmh,
+    distanceMeters: ride.distanceMeters,
+    lat: ride.lastLat,
+    lon: ride.lastLon,
+    altitude: ride.currentAltitude,
+    gpsAccuracy: ride.gpsAccuracy,
+    isPaused: !!isPaused
   };
-  state.samples.push(sample);
-  if (state.samples.length > 180000) state.samples.shift();
-  if (!paused) {
-    pushHistory('heartRate', state.heartRate); pushHistory('cadence', state.cadence); pushHistory('speed', state.speedKmh); pushHistory('power', state.power);
-    const powers = state.samples.filter(s => !s.isPaused && Number.isFinite(s.power)).map(s => s.power);
-    state.avgPower = powers.length ? powers.reduce((a,b) => a+b,0) / powers.length : null;
-    state.maxPower = powers.length ? Math.max(...powers) : null;
-  }
-  handleAutoPause(); render();
-}
+  ride.samples.push(sample);
 
-function pushHistory(key, value) { if (Number.isFinite(value)) state.histories[key].push(value); if (state.histories[key].length > 30) state.histories[key].shift(); }
-
-function handleAutoPause() {
-  if (!settings.autoPause || state.rideState === 'paused' && !autoPaused) return;
-  if (state.rideState === 'recording' && state.speedKmh < 1 && !Number.isFinite(state.power)) {
-    lowSpeedSince ||= Date.now();
-    if (Date.now() - lowSpeedSince > 10000) { state.rideState = 'paused'; autoPaused = true; setRideState('paused'); persist(); }
-  } else {
-    lowSpeedSince = null;
-    if (autoPaused && state.speedKmh > 2.5) { state.rideState = 'recording'; autoPaused = false; setRideState('recording'); persist(); }
+  if (Number.isFinite(sample.power)) {
+    const powers = ride.samples.map(s => s.power).filter(Number.isFinite);
+    ride.avgPower = powers.reduce((a, b) => a + b, 0) / powers.length;
+    ride.maxPower = Math.max(...powers);
   }
 }
 
-async function togglePause() {
-  state.rideState = state.rideState === 'paused' ? 'recording' : 'paused'; autoPaused = false;
-  setRideState(state.rideState); await persist(); requestWakeLock();
+function pauseRide(auto = false) {
+  if (ride.rideState !== 'recording') return;
+  ride.rideState = 'paused';
+  recordSample(true);
+  setPauseButtonLabel();
+  autosave();
+  ui.showToast(auto ? 'Automatisk pause (ingen bevægelse)' : 'Tur sat på pause');
 }
 
-async function addLap() {
-  state.laps.push({ index: state.laps.length + 1, timestamp: new Date().toISOString(), elapsedSec: state.elapsedSec, distanceMeters: Number(state.distanceMeters.toFixed(1)) });
-  await persist(); showInfo('Lap gemt', `Lap ${state.laps.length} ved ${(state.distanceMeters / 1000).toFixed(1)} km.`);
+function resumeRide() {
+  if (ride.rideState !== 'paused') return;
+  ride.rideState = 'recording';
+  belowSpeedTicks = 0;
+  setPauseButtonLabel();
+  autosave();
+  ui.showToast('Tur genoptaget');
 }
 
-async function stopRide() {
-  const result = buildRideJson(publicRideState());
-  clearInterval(ticker); clearInterval(autosaveTimer); state.rideState = 'stopped';
-  await saveLastRide(result); await clearActiveRide(); releaseWakeLock(); setRideState('stopped');
-  $('#resultSummary').textContent = `${(result.distanceMeters / 1000).toFixed(1)} km · ${result.summary.avgPower ?? '--'} W i snit · klar til Training.`;
-  $('#resultDialog').showModal();
+function setPauseButtonLabel() {
+  $('pauseBtn').textContent = ride.rideState === 'paused' ? 'RESUME' : 'PAUSE';
 }
 
-async function persist() { if (['recording','paused'].includes(state.rideState)) await saveActiveRide(publicRideState()); }
+function addLap() {
+  if (ride.rideState !== 'recording' && ride.rideState !== 'paused') return;
+  ride.laps.push({
+    lapNumber: ride.laps.length + 1,
+    elapsedSec: ride.elapsedSec,
+    timestamp: new Date().toISOString(),
+    distanceMeters: ride.distanceMeters
+  });
+  autosave();
+  ui.showToast(`Lap ${ride.laps.length} registreret`);
+}
 
-function render() { renderMetrics(state); }
+async function stopRideConfirmed() {
+  ride.rideState = 'stopped';
+  ride.endTime = new Date().toISOString();
+  clearInterval(tickTimer);
+  tickTimer = null;
+  gps.stop();
+  await ui.releaseWakeLock();
+  document.body.dataset.rideActive = '0';
 
-gps.addEventListener('position', event => {
-  const point = event.detail; state.speedKmh = point.speedKmh ?? state.speedKmh; state.gpsAccuracy = point.accuracy;
-  if (state.rideState === 'recording' && (!lastGpsSample || point.accuracy <= 50)) {
-    if (lastGpsSample) {
-      const distance = haversineMeters(lastGpsSample, point);
-      if (distance >= 2 && distance < 200) { state.distanceMeters += distance; lastGpsSample = point; map.addPoint(point); }
-    } else { lastGpsSample = point; map.addPoint(point); }
-    if (Number.isFinite(point.altitude) && Number.isFinite(state.lastAltitude)) {
-      const gain = point.altitude - state.lastAltitude;
-      if (gain >= 2 && gain < 30) { state.elevationGainMeters += gain; state.lastAltitude = point.altitude; }
-      else if (Math.abs(gain) >= 2) state.lastAltitude = point.altitude;
-    } else if (Number.isFinite(point.altitude)) state.lastAltitude = point.altitude;
-  } else if (state.rideState === 'paused') {
-    lastGpsSample = point;
-    if (Number.isFinite(point.altitude)) state.lastAltitude = point.altitude;
+  const rideJson = buildRideJson(ride);
+  await storage.saveLastRide(rideJson);
+  await storage.clearActiveRide();
+
+  $('rideControls').hidden = true;
+  $('startBtn').hidden = false;
+
+  showExportSummary(rideJson);
+  ui.showModal('exportModal');
+}
+
+function showExportSummary(rideJson) {
+  const s = rideJson.summary;
+  const km = s.distanceKm ?? 0;
+  const mins = Math.round((rideJson.durationSec || 0) / 60);
+  $('exportSummary').innerHTML = `
+    <div><span class="es-label">TID</span><span class="es-value">${mins} min</span></div>
+    <div><span class="es-label">DISTANCE</span><span class="es-value">${km.toFixed(1)} km</span></div>
+    <div><span class="es-label">AVG POWER</span><span class="es-value">${s.avgPower ?? '--'} W</span></div>
+    <div><span class="es-label">AVG PULS</span><span class="es-value">${s.avgHeartRate ?? '--'} bpm</span></div>
+  `;
+  $('exportDownloadBtn').onclick = () => {
+    downloadRideJson(rideJson);
+    ui.showToast('JSON eksporteret');
+  };
+}
+
+async function autosave() {
+  await storage.saveActiveRide(ride);
+}
+
+// ---------------- Recovery on launch ----------------
+async function checkForUnfinishedRide() {
+  const saved = await storage.loadActiveRide();
+  if (saved && (saved.rideState === 'recording' || saved.rideState === 'paused')) {
+    ui.showModal('recoveryModal');
+    $('recoveryResumeBtn').onclick = () => resumeSavedRide(saved);
+    $('recoveryExportBtn').onclick = () => exportSavedRide(saved);
+    $('recoveryDiscardBtn').onclick = () => discardSavedRide();
   }
-  render();
-});
-gps.addEventListener('status', event => setConnection('gps', event.detail.status, event.detail.accuracy ? `Låst · ±${Math.round(event.detail.accuracy)} m` : event.detail.message));
-
-powerMeter.addEventListener('data', event => { state.power = event.detail.power; state.cadence = event.detail.cadence; render(); });
-hrMonitor.addEventListener('data', event => { state.heartRate = event.detail.heartRate; render(); });
-[powerMeter, hrMonitor].forEach(sensor => sensor.addEventListener('status', event => setConnection(event.detail.type, event.detail.status, event.detail.deviceName || event.detail.message)));
-
-async function connectSensor(sensor) {
-  try { await sensor.connect(); }
-  catch (error) { setConnection(sensor.type, 'error', error.message); showInfo('Kunne ikke forbinde', error.message); }
 }
 
-async function requestWakeLock() {
-  $('#wakeWarning').hidden = true;
-  if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') { $('#wakeWarning').hidden = false; return; }
-  try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
-  catch { $('#wakeWarning').hidden = false; }
+function resumeSavedRide(saved) {
+  ride = saved;
+  ride.rideState = 'recording';
+  document.body.dataset.rideActive = '1';
+  $('startBtn').hidden = true;
+  $('rideControls').hidden = false;
+  setPauseButtonLabel();
+
+  gps.reset();
+  gps.restoreTotals({ distanceM: ride.distanceMeters, elevationGainM: ride.elevationGainMeters });
+  gps.start();
+  ui.requestWakeLock();
+
+  if (activeRoute && rideMap.isReady()) rideMap.setPlannedRoute(activeRoute);
+  if (rideMap.isReady() && ride.routePoints?.length) rideMap.loadTrackPoints(ride.routePoints);
+
+  tickTimer = setInterval(tick, 1000);
+  ui.hideModal('recoveryModal');
+  ui.showToast('Tur genoptaget fra gemte data');
 }
-function releaseWakeLock() { wakeLock?.release(); wakeLock = null; }
 
-setupTabs(tab => { if (tab === 'map') map.show(); }); setupSettings(); setupDimMode(() => settings.autoDim);
-$('#startButton').addEventListener('click', () => startRide());
-$('#pauseButton').addEventListener('click', togglePause); $('#lapButton').addEventListener('click', addLap);
-$('#stopButton').addEventListener('click', () => $('#confirmDialog').showModal());
-$('#confirmDialog').addEventListener('close', () => { if ($('#confirmDialog').returnValue === 'confirm') stopRide(); });
-$('#connectPower').addEventListener('click', () => connectSensor(powerMeter)); $('#powerStatus').addEventListener('click', () => connectSensor(powerMeter));
-$('#connectHr').addEventListener('click', () => connectSensor(hrMonitor)); $('#hrStatus').addEventListener('click', () => connectSensor(hrMonitor));
-$('#recenterButton').addEventListener('click', () => map.recenter());
-$('#followRouteButton')?.addEventListener('click', () => map.recenter());
-$('#zoomInButton')?.addEventListener('click', () => map.zoomIn());
-$('#zoomOutButton')?.addEventListener('click', () => map.zoomOut());
-$('#layersButton')?.addEventListener('click', () => map.cycleLayer());
-$('#autoDim').checked = settings.autoDim; $('#autoPause').checked = settings.autoPause;
-$('#autoDim').addEventListener('change', event => { settings.autoDim = event.target.checked; saveSettings(settings); });
-$('#autoPause').addEventListener('change', event => { settings.autoPause = event.target.checked; saveSettings(settings); });
-$('#exportLast').addEventListener('click', async () => { const ride = await getLastRide(); ride ? downloadRide(ride) : showInfo('Ingen gemt tur', 'Afslut en tur først – så kan den eksporteres herfra.'); });
-$('#clearUnfinished').addEventListener('click', async () => { if (confirm('Vil du permanent slette den ufærdige tur?')) { await clearActiveRide(); showInfo('Ufærdig tur ryddet', 'Den aktive autosave er slettet. Afsluttede ture er ikke berørt.'); } });
-$('#showAbout').addEventListener('click', () => showInfo('Om Bike Outdoor', 'Web Bluetooth kræver en understøttet Android-browser. GPS kræver tilladelse. Hold appen åben under turen; baggrunds- og låseskærmstracking er ikke pålidelig i en PWA. Kortfliser kræver internet, men GPS-sporet gemmes også uden kort. Ingen Home Assistant, login, cloud eller backend.'));
-$('#exportRide').addEventListener('click', async () => { const ride = await getLastRide(); if (ride) downloadRide(ride); });
-$('#recoveryDialog').addEventListener('close', async () => {
-  const action = $('#recoveryDialog').returnValue, ride = await getActiveRide();
-  if (action === 'resume' && ride) startRide(ride);
-  if (action === 'export' && ride) downloadRide(buildRideJson(ride));
-  if (action === 'discard') await clearActiveRide();
-});
-document.addEventListener('visibilitychange', () => { persist(); if (document.visibilityState === 'visible' && ['recording','paused'].includes(state.rideState)) requestWakeLock(); });
-window.addEventListener('beforeunload', persist); window.addEventListener('resize', () => map.show());
+async function exportSavedRide(saved) {
+  const rideForExport = { ...saved, endTime: saved.endTime || new Date().toISOString() };
+  const rideJson = buildRideJson(rideForExport);
+  downloadRideJson(rideJson);
+  await storage.clearActiveRide();
+  ui.hideModal('recoveryModal');
+  ui.showToast('Ufærdig tur eksporteret');
+}
 
-if ('getBattery' in navigator) navigator.getBattery().then(battery => { const node = $('#batteryStatus'); node.hidden = false; node.dataset.state = 'on'; const update = () => node.querySelector('small').textContent = `${Math.round(battery.level * 100)}%`; update(); battery.addEventListener('levelchange', update); });
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+async function discardSavedRide() {
+  await storage.clearActiveRide();
+  ui.hideModal('recoveryModal');
+  ui.showToast('Ufærdig tur slettet');
+}
 
-setRideState('idle'); render(); gps.start();
-getActiveRide().then(ride => { if (ride?.rideId && ['recording','paused'].includes(ride.rideState)) $('#recoveryDialog').showModal(); });
+// ---------------- Settings drawer wiring ----------------
+function initSettingsDrawer() {
+  $('menuBtn').addEventListener('click', () => ui.showModal('settingsDrawer'));
+  $('settingsBtn').addEventListener('click', () => ui.showModal('settingsDrawer'));
+  $('closeDrawerBtn').addEventListener('click', () => ui.hideModal('settingsDrawer'));
+
+  $('connectPowerBtn').addEventListener('click', async () => {
+    try { await sensors.connectPower(); }
+    catch { ui.showToast('Kunne ikke forbinde til powermeter'); }
+  });
+  $('connectHrBtn').addEventListener('click', async () => {
+    try { await sensors.connectHeartRate(); }
+    catch { ui.showToast('Kunne ikke forbinde til pulsmåler'); }
+  });
+
+  $('autoDimToggle').addEventListener('change', (e) => {
+    settings.autoDim = e.target.checked;
+    ui.setDimEnabled(settings.autoDim);
+  });
+  $('autoPauseToggle').addEventListener('change', (e) => { settings.autoPause = e.target.checked; });
+
+  $('importGpxBtn').addEventListener('click', () => $('gpxFileInput').click());
+  $('gpxFileInput').addEventListener('change', (e) => loadGpxFromFile(e.target.files?.[0]));
+  $('fitRouteBtn').addEventListener('click', () => {
+    if (!activeRoute) { ui.showToast('Ingen GPX-rute indlæst'); return; }
+    rideMap.fitPlannedRoute();
+    ui.hideModal('settingsDrawer');
+  });
+  $('clearRouteBtn').addEventListener('click', clearActiveRoute);
+
+  $('exportLastBtn').addEventListener('click', async () => {
+    const last = await storage.loadLastRide();
+    if (!last) { ui.showToast('Ingen gemt tur endnu'); return; }
+    downloadRideJson(last);
+    ui.showToast('Seneste tur eksporteret');
+  });
+
+  $('clearUnfinishedBtn').addEventListener('click', async () => {
+    if (!window.confirm('Slet den ufærdige tur permanent?')) return;
+    await storage.clearActiveRide();
+    ui.showToast('Ufærdig tur ryddet');
+  });
+
+  $('aboutBtn').addEventListener('click', () => ui.showModal('aboutModal'));
+  $('aboutCloseBtn').addEventListener('click', () => ui.hideModal('aboutModal'));
+}
+
+// ---------------- Ride control button wiring ----------------
+function initControls() {
+  $('startBtn').addEventListener('click', startRide);
+  $('lapBtn').addEventListener('click', addLap);
+  $('pauseBtn').addEventListener('click', () => {
+    if (ride.rideState === 'recording') pauseRide(false);
+    else if (ride.rideState === 'paused') resumeRide();
+  });
+  $('stopBtn').addEventListener('click', () => ui.showModal('stopModal'));
+  $('stopConfirmBtn').addEventListener('click', () => { ui.hideModal('stopModal'); stopRideConfirmed(); });
+  $('stopCancelBtn').addEventListener('click', () => ui.hideModal('stopModal'));
+  $('exportCloseBtn').addEventListener('click', () => ui.hideModal('exportModal'));
+  $('recenterBtn').addEventListener('click', () => rideMap.recenter());
+}
+
+// ---------------- Boot ----------------
+async function boot() {
+  ui.initTabs((tab) => { if (tab === 'map') setTimeout(() => rideMap.invalidateSize(), 50); });
+  ui.initDimWatchers();
+  initSettingsDrawer();
+  initControls();
+
+  rideMap.init();
+  activeRoute = await storage.loadPlannedRoute();
+  if (activeRoute && rideMap.isReady()) rideMap.setPlannedRoute(activeRoute);
+  updateRouteUi();
+  gps.start(); // pre-ride GPS lock search
+  if (!sensors.isBleSupported()) {
+    ui.setStatusChip('statusPower', 'error', 'INTET BLE');
+    ui.setStatusChip('statusHr', 'error', 'INTET BLE');
+  }
+
+  await checkForUnfinishedRide();
+
+  if ('serviceWorker' in navigator) {
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker.register('sw.js').then((registration) => {
+      registration.update().catch(() => {});
+      setInterval(() => registration.update().catch(() => {}), 60 * 60 * 1000);
+    }).catch(() => { /* offline shell just won't be cached */ });
+  }
+}
+
+boot();

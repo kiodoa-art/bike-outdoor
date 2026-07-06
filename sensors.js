@@ -1,72 +1,144 @@
-class BluetoothSensor extends EventTarget {
-  constructor(type) { super(); this.type = type; this.device = null; this.value = null; this.reconnectTimer = null; }
-  emit(status, message = '') { this.dispatchEvent(new CustomEvent('status', { detail: { type: this.type, status, message, deviceName: this.device?.name } })); }
-  async reconnect() {
-    clearTimeout(this.reconnectTimer);
-    if (!this.device?.gatt) return;
-    try { await this.connectGatt(); }
-    catch { this.reconnectTimer = setTimeout(() => this.reconnect(), 5000); }
-  }
-  disconnect() { clearTimeout(this.reconnectTimer); this.device?.gatt?.disconnect(); this.value = null; this.emit('off'); }
+// sensors.js — Web Bluetooth Cycling Power (Stages) and Heart Rate sensors.
+
+const CYCLING_POWER_SERVICE = 'cycling_power';
+const CYCLING_POWER_MEASUREMENT = 'cycling_power_measurement';
+const HEART_RATE_SERVICE = 'heart_rate';
+const HEART_RATE_MEASUREMENT = 'heart_rate_measurement';
+
+function bleSupported() {
+  return typeof navigator !== 'undefined' && !!navigator.bluetooth;
 }
 
-export class PowerMeter extends BluetoothSensor {
-  constructor() { super('power'); this.cadence = null; this.previousCrank = null; }
-  async connect() {
-    if (!navigator.bluetooth) throw new Error('Web Bluetooth understøttes ikke i denne browser. Brug Chrome på Android.');
-    this.emit('connecting');
-    this.device = await navigator.bluetooth.requestDevice({ filters: [{ services: ['cycling_power'] }], optionalServices: ['battery_service'] });
-    this.device.addEventListener('gattserverdisconnected', () => { this.emit('off', 'Forbindelsen blev afbrudt'); this.reconnect(); });
-    await this.connectGatt();
-  }
-  async connectGatt() {
-    const server = await this.device.gatt.connect();
-    const service = await server.getPrimaryService('cycling_power');
-    const characteristic = await service.getCharacteristic('cycling_power_measurement');
-    characteristic.addEventListener('characteristicvaluechanged', event => this.onMeasurement(event.target.value));
-    await characteristic.startNotifications();
-    this.emit('on');
-  }
-  onMeasurement(data) {
-    const flags = data.getUint16(0, true);
-    this.value = data.getInt16(2, true);
-    let offset = 4;
-    if (flags & 1) offset += 1;
-    if (flags & 4) offset += 2;
-    if (flags & 16) offset += 6;
-    if ((flags & 32) && data.byteLength >= offset + 4) {
-      const revolutions = data.getUint16(offset, true);
-      const eventTime = data.getUint16(offset + 2, true);
-      if (this.previousCrank) {
-        const revDelta = (revolutions - this.previousCrank.revolutions + 65536) % 65536;
-        const timeDelta = (eventTime - this.previousCrank.eventTime + 65536) % 65536;
-        if (timeDelta > 0 && revDelta < 20) this.cadence = Math.round(revDelta * 60 * 1024 / timeDelta);
-      }
-      this.previousCrank = { revolutions, eventTime };
+// Parses the Cycling Power Measurement characteristic (0x2A63).
+// Returns { power, cadence } — cadence derived from crank revolution data if present.
+function parseCyclingPower(dataView, prevCrank) {
+  const flags = dataView.getUint16(0, true);
+  let offset = 2;
+  const power = dataView.getInt16(offset, true);
+  offset += 2;
+
+  const hasPedalPowerBalance = flags & 0x1;
+  if (hasPedalPowerBalance) offset += 1;
+  const hasAccumTorque = flags & 0x4;
+  if (hasAccumTorque) offset += 2;
+  const hasWheelRev = flags & 0x10;
+  if (hasWheelRev) offset += 6;
+  const hasCrankRev = flags & 0x20;
+
+  let cadence = null;
+  let crankState = prevCrank || null;
+  if (hasCrankRev) {
+    const crankRevs = dataView.getUint16(offset, true); offset += 2;
+    const crankEventTime = dataView.getUint16(offset, true); offset += 2; // 1/1024s
+    if (prevCrank) {
+      let revDelta = crankRevs - prevCrank.revs;
+      let timeDelta = crankEventTime - prevCrank.time;
+      if (revDelta < 0) revDelta += 65536;
+      if (timeDelta < 0) timeDelta += 65536;
+      if (timeDelta > 0) cadence = Math.round((revDelta * 1024 * 60) / timeDelta);
     }
-    this.dispatchEvent(new CustomEvent('data', { detail: { power: this.value, cadence: this.cadence } }));
+    crankState = { revs: crankRevs, time: crankEventTime };
   }
+
+  return { power, cadence, crankState };
 }
 
-export class HeartRateMonitor extends BluetoothSensor {
-  constructor() { super('hr'); }
-  async connect() {
-    if (!navigator.bluetooth) throw new Error('Web Bluetooth understøttes ikke i denne browser. Brug Chrome på Android.');
-    this.emit('connecting');
-    this.device = await navigator.bluetooth.requestDevice({ filters: [{ services: ['heart_rate'] }] });
-    this.device.addEventListener('gattserverdisconnected', () => { this.emit('off', 'Forbindelsen blev afbrudt'); this.reconnect(); });
-    await this.connectGatt();
+function parseHeartRate(dataView) {
+  const flags = dataView.getUint8(0);
+  const is16bit = flags & 0x1;
+  return is16bit ? dataView.getUint16(1, true) : dataView.getUint8(1);
+}
+
+export function createSensorManager({ onPower, onCadence, onHeartRate, onPowerStateChange, onHrStateChange }) {
+  let powerDevice = null;
+  let hrDevice = null;
+  let crankState = null;
+
+  async function connectPower() {
+    if (!bleSupported()) { onPowerStateChange('unsupported'); return; }
+    try {
+      onPowerStateChange('connecting');
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [CYCLING_POWER_SERVICE] }],
+        optionalServices: [CYCLING_POWER_SERVICE]
+      });
+      powerDevice = device;
+      device.addEventListener('gattserverdisconnected', () => {
+        onPowerStateChange('disconnected');
+        attemptReconnect(device, connectExistingPower);
+      });
+      await connectExistingPower(device);
+    } catch (err) {
+      onPowerStateChange('disconnected');
+      throw err;
+    }
   }
-  async connectGatt() {
-    const server = await this.device.gatt.connect();
-    const service = await server.getPrimaryService('heart_rate');
-    const characteristic = await service.getCharacteristic('heart_rate_measurement');
-    characteristic.addEventListener('characteristicvaluechanged', event => this.onMeasurement(event.target.value));
-    await characteristic.startNotifications();
-    this.emit('on');
+
+  async function connectExistingPower(device) {
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(CYCLING_POWER_SERVICE);
+    const char = await service.getCharacteristic(CYCLING_POWER_MEASUREMENT);
+    await char.startNotifications();
+    char.addEventListener('characteristicvaluechanged', (event) => {
+      const { power, cadence, crankState: next } = parseCyclingPower(event.target.value, crankState);
+      crankState = next;
+      if (Number.isFinite(power)) onPower(power);
+      if (Number.isFinite(cadence)) onCadence(cadence);
+    });
+    onPowerStateChange('connected');
   }
-  onMeasurement(data) {
-    this.value = data.getUint8(0) & 1 ? data.getUint16(1, true) : data.getUint8(1);
-    this.dispatchEvent(new CustomEvent('data', { detail: { heartRate: this.value } }));
+
+  async function connectHeartRate() {
+    if (!bleSupported()) { onHrStateChange('unsupported'); return; }
+    try {
+      onHrStateChange('connecting');
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [HEART_RATE_SERVICE] }],
+        optionalServices: [HEART_RATE_SERVICE]
+      });
+      hrDevice = device;
+      device.addEventListener('gattserverdisconnected', () => {
+        onHrStateChange('disconnected');
+        attemptReconnect(device, connectExistingHr);
+      });
+      await connectExistingHr(device);
+    } catch (err) {
+      onHrStateChange('disconnected');
+      throw err;
+    }
   }
+
+  async function connectExistingHr(device) {
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(HEART_RATE_SERVICE);
+    const char = await service.getCharacteristic(HEART_RATE_MEASUREMENT);
+    await char.startNotifications();
+    char.addEventListener('characteristicvaluechanged', (event) => {
+      const hr = parseHeartRate(event.target.value);
+      if (Number.isFinite(hr)) onHeartRate(hr);
+    });
+    onHrStateChange('connected');
+  }
+
+  function attemptReconnect(device, reconnectFn, attempt = 1) {
+    if (attempt > 5) return;
+    setTimeout(async () => {
+      try {
+        if (device.gatt.connected) return;
+        await reconnectFn(device);
+      } catch {
+        attemptReconnect(device, reconnectFn, attempt + 1);
+      }
+    }, Math.min(2000 * attempt, 10000));
+  }
+
+  return {
+    connectPower,
+    connectHeartRate,
+    isBleSupported: bleSupported,
+    disconnectAll() {
+      try { powerDevice?.gatt?.disconnect(); } catch { /* ignore */ }
+      try { hrDevice?.gatt?.disconnect(); } catch { /* ignore */ }
+    }
+  };
 }

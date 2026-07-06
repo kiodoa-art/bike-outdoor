@@ -1,69 +1,92 @@
+// storage.js — IndexedDB active-ride autosave and crash recovery.
+// Store: 'bikeOutdoor' DB, object store 'rides' with fixed keys:
+//   'active'  -> the in-progress ride (overwritten continuously)
+//   'lastRide' -> the most recently finished ride (kept for export from settings)
+
 const DB_NAME = 'bike-outdoor';
 const DB_VERSION = 1;
 const STORE = 'rides';
-const ACTIVE_KEY = 'active';
-const LAST_KEY = 'last';
-let dbPromise;
 
-function openDatabase() {
+let dbPromise = null;
+const memoryFallback = new Map();
+
+function openDb() {
   if (!('indexedDB' in window)) return Promise.resolve(null);
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+  return dbPromise;
+}
+
+async function idbPut(key, value) {
+  const db = await openDb();
+  if (!db) { memoryFallback.set(key, value); return; }
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
   });
 }
 
-async function store(mode = 'readonly') {
-  const db = await (dbPromise ||= openDatabase());
-  return db?.transaction(STORE, mode).objectStore(STORE) || null;
-}
-
-async function requestResult(request) {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result ?? null);
-    request.onerror = () => reject(request.error);
+async function idbGet(key) {
+  const db = await openDb();
+  if (!db) return memoryFallback.get(key) ?? null;
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).get(key);
+    req.onsuccess = () => resolve(req.result ?? null);
+    req.onerror = () => resolve(null);
   });
 }
 
-async function write(key, value) {
-  const objectStore = await store('readwrite');
-  if (!objectStore) {
-    localStorage.setItem(`bike-outdoor-${key}`, JSON.stringify(value));
-    return;
-  }
-  await requestResult(objectStore.put(structuredClone(value), key));
+async function idbDelete(key) {
+  const db = await openDb();
+  if (!db) { memoryFallback.delete(key); return; }
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
 }
 
-async function read(key) {
-  const objectStore = await store();
-  if (!objectStore) {
-    const raw = localStorage.getItem(`bike-outdoor-${key}`);
-    return raw ? JSON.parse(raw) : null;
-  }
-  return requestResult(objectStore.get(key));
+export async function saveActiveRide(rideState) {
+  try { await idbPut('active', rideState); } catch { /* never break the ride on autosave failure */ }
 }
 
-async function remove(key) {
-  const objectStore = await store('readwrite');
-  if (!objectStore) return localStorage.removeItem(`bike-outdoor-${key}`);
-  await requestResult(objectStore.delete(key));
+export async function loadActiveRide() {
+  try { return await idbGet('active'); } catch { return null; }
 }
 
-export const saveActiveRide = ride => write(ACTIVE_KEY, ride);
-export const getActiveRide = () => read(ACTIVE_KEY);
-export const clearActiveRide = () => remove(ACTIVE_KEY);
-export const saveLastRide = ride => write(LAST_KEY, ride);
-export const getLastRide = () => read(LAST_KEY);
-
-export function loadSettings() {
-  try { return { autoDim: true, autoPause: false, ...JSON.parse(localStorage.getItem('bike-outdoor-settings') || '{}') }; }
-  catch { return { autoDim: true, autoPause: false }; }
+export async function clearActiveRide() {
+  try { await idbDelete('active'); } catch { /* ignore */ }
 }
 
-export function saveSettings(settings) {
-  localStorage.setItem('bike-outdoor-settings', JSON.stringify(settings));
+export async function saveLastRide(rideJson) {
+  try { await idbPut('lastRide', rideJson); } catch { /* ignore */ }
+}
+
+export async function loadLastRide() {
+  try { return await idbGet('lastRide'); } catch { return null; }
+}
+
+
+export async function savePlannedRoute(route) {
+  try { await idbPut('plannedRoute', route); } catch { /* ignore */ }
+}
+
+export async function loadPlannedRoute() {
+  try { return await idbGet('plannedRoute'); } catch { return null; }
+}
+
+export async function clearPlannedRoute() {
+  try { await idbDelete('plannedRoute'); } catch { /* ignore */ }
 }

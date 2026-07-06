@@ -1,75 +1,98 @@
-const number = value => Number.isFinite(value) ? value : null;
-const rounded = (value, digits = 0) => Number.isFinite(value) ? Number(value.toFixed(digits)) : null;
-const average = values => {
-  const valid = values.filter(Number.isFinite);
-  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
-};
-const maximum = values => {
-  const valid = values.filter(Number.isFinite);
-  return valid.length ? Math.max(...valid) : null;
-};
+// export.js — Builds a ride JSON compatible with the Training app's Bike ride
+// import (bike-json.js: bikeRideToActivity / sanitizeRideSamples), and triggers a download.
+//
+// Training app REQUIRED shape (from TrainingV2 bike-json.js):
+//   { version: 1, source, rideId, startTime, endTime, summary:{...}, samples:[{t, timestamp, power, heartRate, cadence, speedKmh, distanceKm}, ...] }
+//
+// This export adds outdoor-only fields (sport, movingTimeSec, elevationGainMeters, laps,
+// and per-sample lat/lon/altitude/gpsAccuracy/isPaused). The Training app's importer only reads
+// the keys it knows about and ignores the rest, so this is backwards compatible. See the
+// accompanying patched bike-json.js for the one-line change that lets "sport" flow through
+// instead of always forcing "indoor_cycling".
 
-export function buildRideJson(ride, endTime = new Date().toISOString()) {
-  const samples = Array.isArray(ride.samples) ? ride.samples : [];
-  const active = samples.filter(sample => !sample.isPaused);
-  const durationSec = Math.max(0, Math.round(ride.elapsedSec ?? ((Date.parse(endTime) - Date.parse(ride.startTime)) / 1000)));
-  const movingTimeSec = Math.max(0, Math.round(ride.movingTimeSec || 0));
-  const distanceMeters = rounded(ride.distanceMeters || 0, 1);
-  const elevationGainMeters = rounded(ride.elevationGainMeters || 0, 1);
+function pad(n) { return String(n).padStart(2, '0'); }
+
+export function buildFilename(startTime) {
+  const d = new Date(startTime);
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  return `ride-${stamp}-outdoor.json`;
+}
+
+function round(value, decimals = 0) {
+  if (!Number.isFinite(value)) return null;
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+export function buildRideJson(ride) {
+  const { rideId, startTime, endTime, movingTimeSec, distanceMeters, elevationGainMeters, samples, laps } = ride;
+  const durationSec = Number.isFinite(ride.durationSec) ? ride.durationSec : ride.elapsedSec;
+
+  const powers = samples.map(s => s.power).filter(Number.isFinite);
+  const hrs = samples.map(s => s.heartRate).filter(Number.isFinite);
+  const cadences = samples.map(s => s.cadence).filter(Number.isFinite);
+  const speeds = samples.map(s => s.speedKmh).filter(Number.isFinite);
+
+  const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const max = (arr) => arr.length ? Math.max(...arr) : null;
+
+  const distanceKm = round(distanceMeters / 1000, 3);
+
+  const summary = {
+    durationSec: round(durationSec),
+    distanceKm,
+    avgPower: round(avg(powers)),
+    maxPower: round(max(powers)),
+    normalizedPower: null,
+    avgHeartRate: round(avg(hrs)),
+    maxHeartRate: round(max(hrs)),
+    avgCadence: round(avg(cadences)),
+    maxCadence: round(max(cadences)),
+    avgSpeedKmh: round(avg(speeds), 1),
+    maxSpeedKmh: round(max(speeds), 1)
+  };
+
   return {
     version: 1,
     source: 'bike_outdoor',
-    rideId: ride.rideId,
-    startTime: ride.startTime,
+    sport: 'outdoor_cycling',
+    rideId,
+    startTime,
     endTime,
-    durationSec,
-    movingTimeSec,
-    distanceMeters,
-    elevationGainMeters,
-    summary: {
-      durationSec,
-      movingTimeSec,
-      distanceKm: rounded(distanceMeters / 1000, 3),
-      distanceMeters,
-      elevationGainMeters,
-      avgPower: rounded(average(active.map(s => s.power))),
-      maxPower: rounded(maximum(active.map(s => s.power))),
-      avgHeartRate: rounded(average(active.map(s => s.heartRate))),
-      maxHeartRate: rounded(maximum(active.map(s => s.heartRate))),
-      avgCadence: rounded(average(active.map(s => s.cadence))),
-      maxCadence: rounded(maximum(active.map(s => s.cadence))),
-      avgSpeedKmh: rounded(movingTimeSec > 0 ? distanceMeters / movingTimeSec * 3.6 : average(active.map(s => s.speedKmh)), 1),
-      maxSpeedKmh: rounded(maximum(active.map(s => s.speedKmh)), 1)
-    },
-    laps: Array.isArray(ride.laps) ? ride.laps : [],
-    samples: samples.map((sample, index) => ({
-      timestamp: sample.timestamp,
-      t: number(sample.elapsedSec) ?? index,
-      elapsedSec: number(sample.elapsedSec) ?? index,
-      power: number(sample.power),
-      heartRate: number(sample.heartRate),
-      cadence: number(sample.cadence),
-      speedKmh: number(sample.speedKmh),
-      distanceKm: rounded((sample.distanceMeters || 0) / 1000, 5),
-      distanceMeters: rounded(sample.distanceMeters || 0, 1),
-      lat: number(sample.lat), lon: number(sample.lon), altitude: number(sample.altitude),
-      gpsAccuracy: number(sample.gpsAccuracy), heading: number(sample.heading),
-      isPaused: Boolean(sample.isPaused)
+    durationSec: round(durationSec),
+    movingTimeSec: round(movingTimeSec),
+    distanceMeters: round(distanceMeters),
+    elevationGainMeters: round(elevationGainMeters),
+    plannedRoute: ride.plannedRoute || null,
+    summary,
+    laps: laps || [],
+    samples: samples.map(s => ({
+      t: s.t,
+      timestamp: s.timestamp,
+      power: Number.isFinite(s.power) ? s.power : null,
+      heartRate: Number.isFinite(s.heartRate) ? s.heartRate : null,
+      cadence: Number.isFinite(s.cadence) ? s.cadence : null,
+      speedKmh: Number.isFinite(s.speedKmh) ? s.speedKmh : null,
+      distanceKm: Number.isFinite(s.distanceMeters) ? round(s.distanceMeters / 1000, 4) : null,
+      lat: Number.isFinite(s.lat) ? s.lat : null,
+      lon: Number.isFinite(s.lon) ? s.lon : null,
+      altitude: Number.isFinite(s.altitude) ? s.altitude : null,
+      gpsAccuracy: Number.isFinite(s.gpsAccuracy) ? s.gpsAccuracy : null,
+      isPaused: !!s.isPaused
     }))
   };
 }
 
-export function rideFilename(ride) {
-  const date = new Date(ride.startTime);
-  const pad = value => String(value).padStart(2, '0');
-  return `ride-${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}-outdoor.json`;
-}
-
-export function downloadRide(ride) {
-  const json = ride.version === 1 && ride.source === 'bike_outdoor' ? ride : buildRideJson(ride, ride.endTime);
-  const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
+export function downloadRideJson(rideJson) {
+  const filename = buildFilename(rideJson.startTime);
+  const blob = new Blob([JSON.stringify(rideJson, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url; link.download = rideFilename(json); link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return filename;
 }

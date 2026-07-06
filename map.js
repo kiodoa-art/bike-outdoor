@@ -1,132 +1,158 @@
-export class RideMap {
-  constructor(container, canvas, emptyState) {
-    this.container = container;
-    this.canvas = canvas;
-    this.emptyState = emptyState;
-    this.points = [];
-    this.follow = true;
-    this.map = null;
-    this.polyline = null;
-    this.marker = null;
-    this.finishMarker = null;
-    this.tileLayer = null;
-    this.layerIndex = 0;
-    this.layers = [
-      { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', options: { maxZoom: 20, subdomains: 'abcd' } },
-      { url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', options: { maxZoom: 20, subdomains: 'abcd' } }
-    ];
-    this.initialize();
-  }
+// map.js — Leaflet color map with three separate layers:
+// planned GPX route, actual ridden track, and current position marker.
+// Tile loading never blocks GPS collection; tracking still works if map tiles fail.
 
-  initialize() {
-    if (!window.L) { this.resizeFallback(); return; }
-    this.canvas.hidden = true;
-    this.map = L.map(this.container, { zoomControl: false, attributionControl: false, preferCanvas: true }).setView([55.6761, 12.5683], 13);
-    this.tileLayer = L.tileLayer(this.layers[this.layerIndex].url, this.layers[this.layerIndex].options).addTo(this.map);
-    this.polyline = L.polyline([], {
-      color: '#19a7ff',
-      weight: 6,
-      opacity: .96,
-      lineJoin: 'round',
-      lineCap: 'round'
-    }).addTo(this.map);
-    const currentIcon = L.divIcon({ className: '', html: '<div class="route-marker"></div>', iconSize: [24, 24], iconAnchor: [12, 12] });
-    const finishIcon = L.divIcon({ className: '', html: '<div class="route-finish-marker">⚑</div>', iconSize: [34, 34], iconAnchor: [17, 17] });
-    this.marker = L.marker([0, 0], { icon: currentIcon, interactive: false });
-    this.finishMarker = L.marker([0, 0], { icon: finishIcon, interactive: false });
-    this.map.on('dragstart zoomstart', () => { this.follow = false; });
-  }
+export function createRideMap(elementId) {
+  let map = null;
+  let trackLine = null;
+  let plannedRouteLine = null;
+  let positionMarker = null;
+  let startMarker = null;
+  let finishMarker = null;
+  let autoFollow = true;
+  let ready = false;
+  let lastPosition = null;
 
-  addPoint(point) {
-    if (!Number.isFinite(point?.lat) || !Number.isFinite(point?.lon)) return;
-    this.points.push(point);
-    this.emptyState.hidden = true;
-    if (this.map) {
-      const latLng = [point.lat, point.lon];
-      this.polyline.addLatLng(latLng);
-      this.marker.setLatLng(latLng).addTo(this.map);
-      if (this.points.length === 1) this.finishMarker.setLatLng(latLng).addTo(this.map);
-      if (this.follow) this.map.setView(latLng, Math.max(this.map.getZoom(), 15), { animate: true });
-    } else {
-      this.drawFallback();
-    }
-  }
+  function init() {
+    if (typeof L === 'undefined') return; // Leaflet failed to load (offline first run)
 
-  setRoute(points) {
-    this.points = [];
-    if (this.map) {
-      this.polyline.setLatLngs([]);
-      this.marker.remove();
-      this.finishMarker.remove();
-    }
-    for (const point of points || []) this.addPoint(point);
-  }
+    map = L.map(elementId, {
+      zoomControl: false,
+      attributionControl: true,
+      preferCanvas: true
+    }).setView([55.6761, 12.5683], 14);
 
-  recenter() {
-    this.follow = true;
-    const point = this.points.at(-1);
-    if (point && this.map) this.map.setView([point.lat, point.lon], Math.max(this.map.getZoom(), 15), { animate: true });
-    else this.drawFallback();
-  }
+    L.control.zoom({ position: 'topright' }).addTo(map);
 
-  zoomIn() { this.map?.zoomIn(); }
-  zoomOut() { this.map?.zoomOut(); }
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      subdomains: 'abc',
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
 
-  cycleLayer() {
-    if (!this.map || !this.tileLayer) return;
-    this.layerIndex = (this.layerIndex + 1) % this.layers.length;
-    this.map.removeLayer(this.tileLayer);
-    this.tileLayer = L.tileLayer(this.layers[this.layerIndex].url, this.layers[this.layerIndex].options).addTo(this.map);
-  }
+    plannedRouteLine = L.polyline([], {
+      color: '#8b5cf6',
+      weight: 7,
+      opacity: 0.95,
+      lineCap: 'round',
+      lineJoin: 'round'
+    }).addTo(map);
 
-  show() { setTimeout(() => { this.map?.invalidateSize(); this.resizeFallback(); }, 50); }
+    trackLine = L.polyline([], {
+      color: '#00a7ff',
+      weight: 5,
+      opacity: 0.95,
+      lineCap: 'round',
+      lineJoin: 'round'
+    }).addTo(map);
 
-  resizeFallback() {
-    const rect = this.canvas.getBoundingClientRect();
-    const ratio = window.devicePixelRatio || 1;
-    this.canvas.width = rect.width * ratio;
-    this.canvas.height = rect.height * ratio;
-    this.canvas.getContext('2d').setTransform(ratio, 0, 0, ratio, 0, 0);
-    this.drawFallback();
-  }
-
-  drawFallback() {
-    if (this.map) return;
-    const ctx = this.canvas.getContext('2d');
-    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#081018';
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = '#17232b';
-    ctx.lineWidth = 1;
-    for (let x = 20; x < w; x += 45) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x - 25, h); ctx.stroke(); }
-    for (let y = 25; y < h; y += 55) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y + 15); ctx.stroke(); }
-    if (this.points.length < 2) return;
-
-    const lats = this.points.map(p => p.lat), lons = this.points.map(p => p.lon);
-    const minLat = Math.min(...lats), maxLat = Math.max(...lats), minLon = Math.min(...lons), maxLon = Math.max(...lons);
-    const project = p => ({
-      x: 30 + (p.lon - minLon) / (maxLon - minLon || .00001) * (w - 60),
-      y: h - 30 - (p.lat - minLat) / (maxLat - minLat || .00001) * (h - 90)
+    const currentDot = L.divIcon({
+      className: 'ride-marker-current',
+      html: '<span></span>',
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
     });
 
-    ctx.shadowColor = '#149fff';
-    ctx.shadowBlur = 14;
-    ctx.strokeStyle = '#19a7ff';
-    ctx.lineWidth = 5;
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    this.points.forEach((p, i) => { const q = project(p); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
-    ctx.stroke();
+    positionMarker = L.marker([55.6761, 12.5683], { icon: currentDot }).addTo(map);
 
-    const current = project(this.points.at(-1));
-    ctx.shadowBlur = 16;
-    ctx.fillStyle = '#168fff';
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(current.x, current.y, 11, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    map.on('dragstart zoomstart', () => { autoFollow = false; });
+    ready = true;
   }
+
+  function makePin(className, label) {
+    return L.divIcon({
+      className,
+      html: `<span>${label}</span>`,
+      iconSize: [34, 34],
+      iconAnchor: [17, 17]
+    });
+  }
+
+  function setPosition(lat, lon) {
+    if (!ready || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    lastPosition = [lat, lon];
+    positionMarker.setLatLng(lastPosition);
+    if (autoFollow) map.panTo(lastPosition, { animate: true });
+  }
+
+  function addTrackPoint(lat, lon) {
+    if (!ready || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    const point = [lat, lon];
+    trackLine.addLatLng(point);
+    setPosition(lat, lon);
+  }
+
+  function loadTrackPoints(points = []) {
+    if (!ready) return;
+    const latlngs = points
+      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+      .map(p => [p.lat, p.lon]);
+    trackLine.setLatLngs(latlngs);
+    if (latlngs.length) {
+      const last = latlngs[latlngs.length - 1];
+      positionMarker.setLatLng(last);
+      map.setView(last, 15);
+    }
+  }
+
+  function clearTrack() {
+    if (!ready) return;
+    trackLine.setLatLngs([]);
+  }
+
+  function setPlannedRoute(route) {
+    if (!ready || !route?.points?.length) return;
+    const latlngs = route.points.map(p => [p.lat, p.lon]);
+    plannedRouteLine.setLatLngs(latlngs);
+
+    if (startMarker) map.removeLayer(startMarker);
+    if (finishMarker) map.removeLayer(finishMarker);
+
+    startMarker = L.marker(latlngs[0], { icon: makePin('route-pin route-pin-start', 'S') }).addTo(map);
+    finishMarker = L.marker(latlngs[latlngs.length - 1], { icon: makePin('route-pin route-pin-finish', 'M') }).addTo(map);
+
+    fitPlannedRoute();
+  }
+
+  function clearPlannedRoute() {
+    if (!ready) return;
+    plannedRouteLine.setLatLngs([]);
+    if (startMarker) { map.removeLayer(startMarker); startMarker = null; }
+    if (finishMarker) { map.removeLayer(finishMarker); finishMarker = null; }
+  }
+
+  function fitPlannedRoute() {
+    if (!ready) return;
+    const routeLatLngs = plannedRouteLine.getLatLngs();
+    if (routeLatLngs.length) {
+      map.fitBounds(L.latLngBounds(routeLatLngs), { padding: [30, 30], maxZoom: 16 });
+      return;
+    }
+    const trackLatLngs = trackLine.getLatLngs();
+    if (trackLatLngs.length) map.fitBounds(L.latLngBounds(trackLatLngs), { padding: [30, 30], maxZoom: 16 });
+  }
+
+  function recenter() {
+    if (!ready) return;
+    autoFollow = true;
+    if (lastPosition) map.setView(lastPosition, Math.max(map.getZoom(), 15));
+  }
+
+  function invalidateSize() {
+    if (ready) map.invalidateSize();
+  }
+
+  return {
+    init,
+    setPosition,
+    addTrackPoint,
+    loadTrackPoints,
+    clearTrack,
+    setPlannedRoute,
+    clearPlannedRoute,
+    fitPlannedRoute,
+    recenter,
+    invalidateSize,
+    isReady: () => ready
+  };
 }
