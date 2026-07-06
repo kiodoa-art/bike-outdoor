@@ -1,95 +1,61 @@
-// gps.js — Geolocation tracking, distance/speed/elevation calculation.
-
-const EARTH_RADIUS_M = 6371000;
-const MIN_ACCURACY_M = 30;      // ignore fixes worse than this for distance accumulation
-const MIN_ELEVATION_DELTA_M = 1.5; // ignore small elevation jitter
-const MIN_MOVE_DISTANCE_M = 1;  // ignore GPS jitter smaller than this between fixes
-
-function toRad(deg) { return (deg * Math.PI) / 180; }
-
-function haversineDistance(a, b) {
-  const dLat = toRad(b.lat - a.lat);
-  const dLon = toRad(b.lon - a.lon);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
+export function haversineMeters(a, b) {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad;
+  const dLon = (b.lon - a.lon) * rad;
+  const lat1 = a.lat * rad;
+  const lat2 = b.lat * rad;
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
+  return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-export function createGpsTracker({ onFix, onStateChange }) {
-  let watchId = null;
-  let lastPoint = null;
-  let totalDistanceM = 0;
-  let elevationGainM = 0;
-  let lastElevation = null;
+export function normalizePosition(position, previous = null) {
+  const { coords } = position;
+  const timestamp = new Date(position.timestamp || Date.now()).toISOString();
+  let speedKmh = Number.isFinite(coords.speed) && coords.speed >= 0 ? coords.speed * 3.6 : null;
+  if (speedKmh === null && previous) {
+    const seconds = (Date.parse(timestamp) - Date.parse(previous.timestamp)) / 1000;
+    if (seconds > 0) speedKmh = Math.min(120, haversineMeters(previous, { lat: coords.latitude, lon: coords.longitude }) / seconds * 3.6);
+  }
+  return {
+    timestamp, lat: coords.latitude, lon: coords.longitude,
+    altitude: Number.isFinite(coords.altitude) ? coords.altitude : null,
+    accuracy: Number.isFinite(coords.accuracy) ? coords.accuracy : null,
+    heading: Number.isFinite(coords.heading) ? coords.heading : null,
+    speedKmh
+  };
+}
 
-  function start() {
-    if (!('geolocation' in navigator)) {
-      onStateChange('error', 'Geolocation understøttes ikke');
+export class GPSTracker extends EventTarget {
+  watchId = null;
+  latest = null;
+  status = 'searching';
+
+  start() {
+    if (!navigator.geolocation) {
+      this.status = 'error';
+      this.dispatchEvent(new CustomEvent('status', { detail: { status: this.status, message: 'GPS understøttes ikke' } }));
       return;
     }
-    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-    onStateChange('searching');
-    watchId = navigator.geolocation.watchPosition(
-      (position) => handleFix(position),
-      (err) => onStateChange('error', err.message),
+    if (this.watchId !== null) return;
+    this.status = 'searching';
+    this.dispatchEvent(new CustomEvent('status', { detail: { status: this.status } }));
+    this.watchId = navigator.geolocation.watchPosition(
+      position => {
+        this.latest = normalizePosition(position, this.latest);
+        this.status = 'on';
+        this.dispatchEvent(new CustomEvent('position', { detail: this.latest }));
+        this.dispatchEvent(new CustomEvent('status', { detail: { status: 'on', accuracy: this.latest.accuracy } }));
+      },
+      error => {
+        this.status = error.code === 1 ? 'error' : 'searching';
+        this.dispatchEvent(new CustomEvent('status', { detail: { status: this.status, message: error.message } }));
+      },
       { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
     );
   }
 
-  function handleFix(position) {
-    const { latitude: lat, longitude: lon, altitude, accuracy, speed, heading } = position.coords;
-    const timestamp = position.timestamp;
-
-    let deltaDistanceM = 0;
-    if (lastPoint && accuracy <= MIN_ACCURACY_M) {
-      const d = haversineDistance(lastPoint, { lat, lon });
-      if (d >= MIN_MOVE_DISTANCE_M) {
-        deltaDistanceM = d;
-        totalDistanceM += d;
-      }
-    }
-
-    if (Number.isFinite(altitude)) {
-      if (lastElevation !== null) {
-        const delta = altitude - lastElevation;
-        if (delta > MIN_ELEVATION_DELTA_M) elevationGainM += delta;
-      }
-      lastElevation = altitude;
-    }
-
-    if (accuracy <= MIN_ACCURACY_M) lastPoint = { lat, lon };
-    onStateChange(lastPoint ? 'locked' : 'searching');
-
-    onFix({
-      lat, lon,
-      altitude: Number.isFinite(altitude) ? altitude : null,
-      accuracy: Number.isFinite(accuracy) ? accuracy : null,
-      speedMs: Number.isFinite(speed) ? speed : null,
-      heading: Number.isFinite(heading) ? heading : null,
-      timestamp,
-      deltaDistanceM,
-      totalDistanceM,
-      elevationGainM
-    });
+  stop() {
+    if (this.watchId !== null) navigator.geolocation.clearWatch(this.watchId);
+    this.watchId = null;
   }
-
-  function stop() {
-    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-  }
-
-  function reset() {
-    lastPoint = null;
-    totalDistanceM = 0;
-    elevationGainM = 0;
-    lastElevation = null;
-  }
-
-  function restoreTotals({ distanceM, elevationGainM: elev }) {
-    if (Number.isFinite(distanceM)) totalDistanceM = distanceM;
-    if (Number.isFinite(elev)) elevationGainM = elev;
-  }
-
-  return { start, stop, reset, restoreTotals };
 }
