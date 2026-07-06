@@ -359,7 +359,17 @@ async function boot() {
   await checkForUnfinishedRide();
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => { /* offline shell just won't be cached */ });
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker.register('sw.js').then((registration) => {
+      registration.update().catch(() => {});
+      setInterval(() => registration.update().catch(() => {}), 60 * 60 * 1000);
+    }).catch(() => { /* offline shell just won't be cached */ });
   }
 }
 

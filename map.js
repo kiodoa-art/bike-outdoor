@@ -1,4 +1,4 @@
-// map.js — Leaflet dark map, route polyline, position marker, recenter control.
+// map.js — Leaflet color map, route polyline, position marker, recenter control.
 // Tile tracking never blocks GPS point collection: if tiles fail to load (offline),
 // the app keeps recording route points regardless.
 
@@ -14,17 +14,17 @@ export function createRideMap(elementId) {
     map = L.map(elementId, { zoomControl: false, attributionControl: true })
       .setView([55.6761, 12.5683], 14);
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      subdomains: 'abcd',
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      subdomains: 'abc',
       maxZoom: 19,
-      attribution: '&copy; OpenStreetMap &copy; CARTO'
+      attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    polyline = L.polyline([], { color: '#3fd0ff', weight: 4, opacity: 0.9 }).addTo(map);
+    polyline = L.polyline([], { color: '#006dff', weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(map);
 
     const dot = L.divIcon({
       className: 'ride-marker',
-      html: '<div style="width:14px;height:14px;border-radius:50%;background:#3fd0ff;box-shadow:0 0 10px 4px rgba(63,208,255,0.7);border:2px solid #0a0d10;"></div>',
+      html: '<div style="width:16px;height:16px;border-radius:50%;background:#006dff;box-shadow:0 0 0 5px rgba(0,109,255,0.22),0 0 16px 4px rgba(0,109,255,0.55);border:3px solid #ffffff;"></div>',
       iconSize: [14, 14],
       iconAnchor: [7, 7]
     });

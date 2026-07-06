@@ -86,3 +86,13 @@ manifest.webmanifest     — PWA-manifest
 icons/                   — app-ikoner (maskable-sikre)
 training-app-patch/bike-json.js — patched fil til Training-appen (se ovenfor)
 ```
+
+
+## Version 2 changes
+
+- Map view now uses normal colored OpenStreetMap tiles instead of a dark tile set, because the dark map was too hard to read outdoors.
+- Service worker cache was changed from cache-first to network-first for local app files.
+- Cache name was bumped to `bike-outdoor-v2-color-map-force-update`.
+- New service worker versions call `skipWaiting()`, `clients.claim()` and reload open app windows once, so GitHub Pages updates do not keep serving stale JavaScript/CSS for ages.
+
+When changing the app again, bump `CACHE_NAME` in `sw.js` every time you upload a new release.

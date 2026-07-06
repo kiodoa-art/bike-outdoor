@@ -268,7 +268,7 @@ body.dim{ transition:filter .6s ease; }
   overflow:hidden;
   background:var(--panel);
 }
-.map-el{ position:absolute; inset:0; background:#0a0d10; }
+.map-el{ position:absolute; inset:0; background:#d7e4d1; }
 .map-recenter{
   position:absolute; right:12px; bottom:86px;
   width:42px;height:42px;border-radius:50%;
@@ -290,10 +290,11 @@ body.dim{ transition:filter .6s ease; }
 .map-info-title{ font-size:11px; font-weight:700; letter-spacing:0.5px; color:var(--green); margin-bottom:4px; }
 .map-info-row{ display:flex; justify-content:space-between; font-size:12.5px; color:var(--text-dim); font-weight:600; }
 
-/* leaflet dark tweaks */
-.leaflet-container{ background:#0a0d10; }
-.leaflet-control-attribution{ background:rgba(5,5,5,0.6)!important; color:var(--text-faint)!important; font-size:9px!important; }
-.leaflet-control-attribution a{ color:var(--text-dim)!important; }
+/* leaflet color map tweaks */
+.leaflet-container{ background:#d7e4d1; }
+.leaflet-control-attribution{ background:rgba(255,255,255,0.78)!important; color:#263238!important; font-size:9px!important; border-radius:8px 0 0 0; }
+.leaflet-control-attribution a{ color:#0645ad!important; }
+.leaflet-tile{ filter:saturate(1.08) contrast(1.03); }
 
 /* ============ CONTROLS ============ */
 .controls{ padding:10px 16px 14px; flex-shrink:0; }
