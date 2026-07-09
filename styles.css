@@ -81,12 +81,14 @@ body.dim .tabswitch-indicator{ box-shadow:none; }
 
 /* ============ HEADER ============ */
 .topbar{
-  display:flex;
+  display:grid;
+  grid-template-columns:42px 1fr 42px;
   align-items:center;
-  justify-content:space-between;
   padding:11px 16px 3px;
   flex-shrink:0;
 }
+.topbar-title{ grid-column:2; justify-self:center; }
+#settingsBtn{ grid-column:3; justify-self:end; }
 .icon-btn{
   width:42px;
   height:42px;

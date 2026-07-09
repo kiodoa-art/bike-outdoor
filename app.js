@@ -378,7 +378,6 @@ async function discardSavedRide() {
 
 // ---------------- Settings drawer wiring ----------------
 function initSettingsDrawer() {
-  $('menuBtn').addEventListener('click', () => ui.showModal('settingsDrawer'));
   $('settingsBtn').addEventListener('click', () => ui.showModal('settingsDrawer'));
   $('closeDrawerBtn').addEventListener('click', () => ui.hideModal('settingsDrawer'));
 
