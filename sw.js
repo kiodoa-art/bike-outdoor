@@ -2,7 +2,7 @@
 // Bump CACHE_NAME for every released build. New service workers take control immediately,
 // clear old caches, and refresh open app windows so GitHub Pages does not hang on old files.
 
-const CACHE_NAME = 'bike-outdoor-v6-layout-bottom-fix';
+const CACHE_NAME = 'bike-outdoor-v7-csc-layout-compact';
 const APP_SHELL = [
   './',
   './index.html',

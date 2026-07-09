@@ -12,7 +12,28 @@ const AUTOSAVE_INTERVAL_TICKS = 6; // ~6s at 1Hz
 const AUTO_PAUSE_SPEED_KMH = 2;
 const AUTO_PAUSE_TICKS = 8; // ~8s below threshold before auto-pausing
 
-let settings = { autoDim: true, autoPause: true };
+const SETTINGS_KEY = 'bikeOutdoorSettingsV2';
+
+const DEFAULT_SETTINGS = {
+  autoDim: true,
+  autoPause: true,
+  wheelCircumferenceMm: 2105
+};
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    return { ...DEFAULT_SETTINGS, ...(saved || {}) };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* ignore */ }
+}
+
+let settings = loadSettings();
 
 // ---------------- Ride state ----------------
 function freshRide() {
@@ -24,11 +45,15 @@ function freshRide() {
     elapsedSec: 0,
     movingTimeSec: 0,
     distanceMeters: 0,
+    distanceSource: 'gps',
     elevationGainMeters: 0,
     currentPower: null,
     currentCadence: null,
     currentHeartRate: null,
     currentSpeedKmh: null,
+    currentSpeedSource: null,
+    currentCadenceSource: null,
+    wheelCircumferenceMm: settings.wheelCircumferenceMm,
     gpsAccuracy: null,
     currentAltitude: null,
     lastLat: null,
@@ -47,12 +72,44 @@ let tickTimer = null;
 let ticksSinceAutosave = 0;
 let belowSpeedTicks = 0;
 let lastFixTimestamp = null;
+let speedSensorConnected = false;
+let cadenceSensorConnected = false;
+let lastSpeedSensorAt = 0;
+
+function useWheelSpeedAndDistance() {
+  return speedSensorConnected || ride.distanceSource === 'wheel';
+}
+
+function markStaleSpeedSensorIfNeeded() {
+  if (!speedSensorConnected || ride.currentSpeedSource !== 'sensor') return;
+  if (lastSpeedSensorAt > 0 && Date.now() - lastSpeedSensorAt > 4500) {
+    ride.currentSpeedKmh = 0;
+  }
+}
 
 // ---------------- Sensors ----------------
 const sensors = createSensorManager({
   onPower: (w) => { ride.currentPower = w; },
-  onCadence: (c) => { ride.currentCadence = c; },
+  onCadence: (c, source = 'power') => {
+    ride.currentCadence = c;
+    ride.currentCadenceSource = source;
+  },
   onHeartRate: (hr) => { ride.currentHeartRate = hr; },
+  onCscSpeed: ({ speedKmh, distanceDeltaMeters }) => {
+    speedSensorConnected = true;
+    lastSpeedSensorAt = Date.now();
+    ride.currentSpeedSource = 'sensor';
+    if (Number.isFinite(speedKmh)) ride.currentSpeedKmh = speedKmh;
+    if (ride.rideState === 'recording' && Number.isFinite(distanceDeltaMeters) && distanceDeltaMeters > 0) {
+      ride.distanceSource = 'wheel';
+      ride.distanceMeters += distanceDeltaMeters;
+    }
+  },
+  onCscCadence: (cadence, source = 'csc_cadence') => {
+    cadenceSensorConnected = true;
+    ride.currentCadence = cadence;
+    ride.currentCadenceSource = source;
+  },
   onPowerStateChange: (state) => {
     if (state === 'connected') ui.setStatusChip('statusPower', 'ok', 'CONNECT');
     else if (state === 'connecting') ui.setStatusChip('statusPower', 'searching', 'FORBINDER');
@@ -64,8 +121,24 @@ const sensors = createSensorManager({
     else if (state === 'connecting') ui.setStatusChip('statusHr', 'searching', 'FORBINDER');
     else if (state === 'unsupported') ui.setStatusChip('statusHr', 'error', 'INTET BLE');
     else ui.setStatusChip('statusHr', 'off', 'FRA');
+  },
+  onSpeedStateChange: (state) => {
+    speedSensorConnected = state === 'connected' ? true : state === 'connecting' ? speedSensorConnected : false;
+    if (state === 'connected') ui.setStatusChip('statusSpeed', 'ok', 'CONNECT');
+    else if (state === 'connecting') ui.setStatusChip('statusSpeed', 'searching', 'FORBINDER');
+    else if (state === 'unsupported') ui.setStatusChip('statusSpeed', 'error', 'INTET BLE');
+    else ui.setStatusChip('statusSpeed', 'off', 'FRA');
+  },
+  onCadenceStateChange: (state) => {
+    cadenceSensorConnected = state === 'connected' ? true : state === 'connecting' ? cadenceSensorConnected : false;
+    if (state === 'connected') ui.setStatusChip('statusCadence', 'ok', 'CONNECT');
+    else if (state === 'connecting') ui.setStatusChip('statusCadence', 'searching', 'FORBINDER');
+    else if (state === 'unsupported') ui.setStatusChip('statusCadence', 'error', 'INTET BLE');
+    else ui.setStatusChip('statusCadence', 'off', 'FRA');
   }
 });
+
+sensors.setWheelCircumferenceMm(settings.wheelCircumferenceMm);
 
 // ---------------- GPS ----------------
 const gps = createGpsTracker({
@@ -77,10 +150,16 @@ const gps = createGpsTracker({
     lastFixTimestamp = fix.timestamp;
 
     const speedMs = Number.isFinite(fix.speedMs) ? fix.speedMs : null;
-    ride.currentSpeedKmh = speedMs !== null ? speedMs * 3.6 : ride.currentSpeedKmh;
+    if (!useWheelSpeedAndDistance()) {
+      ride.currentSpeedKmh = speedMs !== null ? speedMs * 3.6 : ride.currentSpeedKmh;
+      ride.currentSpeedSource = speedMs !== null ? 'gps' : ride.currentSpeedSource;
+    }
 
     if (ride.rideState === 'recording') {
-      ride.distanceMeters = fix.totalDistanceM;
+      if (!useWheelSpeedAndDistance()) {
+        ride.distanceSource = 'gps';
+        ride.distanceMeters = fix.totalDistanceM;
+      }
       ride.elevationGainMeters = fix.elevationGainM;
       ride.routePoints.push({ lat: fix.lat, lon: fix.lon });
       if (rideMap.isReady()) rideMap.addTrackPoint(fix.lat, fix.lon);
@@ -180,6 +259,7 @@ async function clearActiveRoute() {
 // ---------------- Ride lifecycle ----------------
 function startRide() {
   ride = freshRide();
+  ride.wheelCircumferenceMm = settings.wheelCircumferenceMm;
   ride.rideState = 'recording';
   ride.startTime = new Date().toISOString();
   ride.rideId = `ride-${ride.startTime.replace(/[:.]/g, '-')}-outdoor`;
@@ -200,6 +280,8 @@ function startRide() {
 }
 
 function tick() {
+  markStaleSpeedSensorIfNeeded();
+
   if (ride.rideState === 'recording') {
     ride.elapsedSec += 1;
 
@@ -238,8 +320,11 @@ function recordSample(isPaused) {
     power: ride.currentPower,
     heartRate: ride.currentHeartRate,
     cadence: ride.currentCadence,
+    cadenceSource: ride.currentCadenceSource,
     speedKmh: ride.currentSpeedKmh,
+    speedSource: ride.currentSpeedSource,
     distanceMeters: ride.distanceMeters,
+    distanceSource: ride.distanceSource,
     lat: ride.lastLat,
     lon: ride.lastLon,
     altitude: ride.currentAltitude,
@@ -381,6 +466,10 @@ function initSettingsDrawer() {
   $('settingsBtn').addEventListener('click', () => ui.showModal('settingsDrawer'));
   $('closeDrawerBtn').addEventListener('click', () => ui.hideModal('settingsDrawer'));
 
+  $('autoDimToggle').checked = settings.autoDim;
+  $('autoPauseToggle').checked = settings.autoPause;
+  $('wheelCircumferenceInput').value = settings.wheelCircumferenceMm;
+
   $('connectPowerBtn').addEventListener('click', async () => {
     try { await sensors.connectPower(); }
     catch { ui.showToast('Kunne ikke forbinde til powermeter'); }
@@ -389,12 +478,39 @@ function initSettingsDrawer() {
     try { await sensors.connectHeartRate(); }
     catch { ui.showToast('Kunne ikke forbinde til pulsmåler'); }
   });
+  $('connectSpeedBtn').addEventListener('click', async () => {
+    try {
+      sensors.setWheelCircumferenceMm(settings.wheelCircumferenceMm);
+      await sensors.connectSpeedSensor();
+      ui.showToast('Speed sensor forbundet');
+    } catch { ui.showToast('Kunne ikke forbinde til speed sensor'); }
+  });
+  $('connectCadenceBtn').addEventListener('click', async () => {
+    try {
+      await sensors.connectCadenceSensor();
+      ui.showToast('Kadence sensor forbundet');
+    } catch { ui.showToast('Kunne ikke forbinde til kadence sensor'); }
+  });
+
+  $('wheelCircumferenceInput').addEventListener('change', (e) => {
+    const value = Number(e.target.value);
+    if (!Number.isFinite(value) || value < 500 || value > 3200) {
+      e.target.value = settings.wheelCircumferenceMm;
+      ui.showToast('Hjulomkreds skal være mellem 500 og 3200 mm');
+      return;
+    }
+    settings.wheelCircumferenceMm = Math.round(value);
+    sensors.setWheelCircumferenceMm(settings.wheelCircumferenceMm);
+    saveSettings();
+    ui.showToast('Hjulomkreds gemt');
+  });
 
   $('autoDimToggle').addEventListener('change', (e) => {
     settings.autoDim = e.target.checked;
     ui.setDimEnabled(settings.autoDim);
+    saveSettings();
   });
-  $('autoPauseToggle').addEventListener('change', (e) => { settings.autoPause = e.target.checked; });
+  $('autoPauseToggle').addEventListener('change', (e) => { settings.autoPause = e.target.checked; saveSettings(); });
 
   $('importGpxBtn').addEventListener('click', () => $('gpxFileInput').click());
   $('gpxFileInput').addEventListener('change', (e) => loadGpxFromFile(e.target.files?.[0]));
@@ -441,6 +557,7 @@ function initControls() {
 async function boot() {
   ui.initTabs((tab) => { if (tab === 'map') setTimeout(() => rideMap.invalidateSize(), 50); });
   ui.initDimWatchers();
+  ui.setDimEnabled(settings.autoDim);
   initSettingsDrawer();
   initControls();
 
@@ -452,6 +569,8 @@ async function boot() {
   if (!sensors.isBleSupported()) {
     ui.setStatusChip('statusPower', 'error', 'INTET BLE');
     ui.setStatusChip('statusHr', 'error', 'INTET BLE');
+    ui.setStatusChip('statusSpeed', 'error', 'INTET BLE');
+    ui.setStatusChip('statusCadence', 'error', 'INTET BLE');
   }
 
   await checkForUnfinishedRide();

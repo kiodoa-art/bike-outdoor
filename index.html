@@ -45,6 +45,12 @@
     <div class="status-chip" id="statusHr" data-state="off">
       <span class="status-dot"></span><span class="status-label">PULS</span><span class="status-value">FRA</span>
     </div>
+    <div class="status-chip" id="statusSpeed" data-state="off">
+      <span class="status-dot"></span><span class="status-label">SPEED</span><span class="status-value">FRA</span>
+    </div>
+    <div class="status-chip" id="statusCadence" data-state="off">
+      <span class="status-dot"></span><span class="status-label">KAD</span><span class="status-value">FRA</span>
+    </div>
     <div class="status-chip status-chip-batt" id="statusBattery" hidden>
       <span class="status-dot"></span><span class="status-value">--%</span>
     </div>
@@ -202,6 +208,26 @@
       <span>Pulsmåler</span>
       <button id="connectHrBtn" class="btn-mini">Forbind</button>
     </div>
+
+    <div class="drawer-section-title">Speed / kadence</div>
+    <div class="drawer-row">
+      <span>Speed sensor</span>
+      <button id="connectSpeedBtn" class="btn-mini">Forbind</button>
+    </div>
+    <div class="drawer-row">
+      <span>Kadence sensor</span>
+      <button id="connectCadenceBtn" class="btn-mini">Forbind</button>
+    </div>
+    <div class="drawer-row drawer-row-input">
+      <div>
+        <span>Hjulomkreds</span>
+        <small>700x25c er typisk ca. 2105 mm</small>
+      </div>
+      <label class="number-input-wrap"><input id="wheelCircumferenceInput" class="number-input" type="number" inputmode="numeric" min="500" max="3200" step="1" value="2105"><span>mm</span></label>
+    </div>
+    <div class="drawer-help">Speed sensor bruges til hastighed og distance, når den er forbundet. GPS bruges stadig til kort og højde.</div>
+
+    <div class="drawer-section-title">GPS / adfærd</div>
     <div class="drawer-row">
       <span>GPS-status</span>
       <span id="drawerGpsStatus" class="drawer-value">Søger…</span>
@@ -284,6 +310,7 @@
     <p class="about-text">Bike Outdoor er en statisk PWA uden backend, login eller cloud. Data gemmes kun lokalt på enheden og eksporteres som JSON til Training-appen.</p>
     <ul class="about-list">
       <li>Web Bluetooth kræver en understøttet Android-browser (fx Chrome).</li>
+      <li>Speed/kadence-sensorer skal sende Bluetooth LE Cycling Speed and Cadence.</li>
       <li>GPS kræver lokationstilladelse.</li>
       <li>Tracking forventes at køre, mens appen er åben og synlig.</li>
       <li>Baggrunds-/låst skærm-tracking kan være upålidelig i en browser.</li>

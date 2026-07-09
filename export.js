@@ -62,7 +62,11 @@ export function buildRideJson(ride) {
     durationSec: round(durationSec),
     movingTimeSec: round(movingTimeSec),
     distanceMeters: round(distanceMeters),
+    distanceSource: ride.distanceSource || null,
     elevationGainMeters: round(elevationGainMeters),
+    sensorSettings: {
+      wheelCircumferenceMm: Number.isFinite(ride.wheelCircumferenceMm) ? ride.wheelCircumferenceMm : null
+    },
     plannedRoute: ride.plannedRoute || null,
     summary,
     laps: laps || [],
@@ -72,8 +76,11 @@ export function buildRideJson(ride) {
       power: Number.isFinite(s.power) ? s.power : null,
       heartRate: Number.isFinite(s.heartRate) ? s.heartRate : null,
       cadence: Number.isFinite(s.cadence) ? s.cadence : null,
+      cadenceSource: s.cadenceSource || null,
       speedKmh: Number.isFinite(s.speedKmh) ? s.speedKmh : null,
+      speedSource: s.speedSource || null,
       distanceKm: Number.isFinite(s.distanceMeters) ? round(s.distanceMeters / 1000, 4) : null,
+      distanceSource: s.distanceSource || null,
       lat: Number.isFinite(s.lat) ? s.lat : null,
       lon: Number.isFinite(s.lon) ? s.lon : null,
       altitude: Number.isFinite(s.altitude) ? s.altitude : null,
