@@ -30,6 +30,10 @@
   --radius-md:18px;
   --radius-sm:14px;
 
+  /* Android/Edge PWA kan lade system-navigationen dække bunden.
+     Denne reserve holder ride-knapperne synlige over bundbjælken. */
+  --bottom-ui-safe: max(env(safe-area-inset-bottom, 0px), 72px);
+
   color-scheme:dark;
 }
 
@@ -186,11 +190,11 @@ body.dim .tabswitch-indicator{ box-shadow:none; }
 .status-label{ opacity:0.58; }
 
 /* ============ MAIN VIEWS ============ */
-.views{ flex:1; position:relative; overflow:hidden; }
+.views{ flex:1 1 auto; min-height:0; position:relative; overflow:hidden; }
 .view{
   position:absolute;
   inset:0;
-  padding:3px 16px 10px;
+  padding:3px 16px 22px;
   overflow-y:auto;
   opacity:0;
   pointer-events:none;
@@ -433,7 +437,11 @@ body.dim .tabswitch-indicator{ box-shadow:none; }
 .route-pin-finish span{ background:var(--orange); }
 
 /* ============ CONTROLS ============ */
-.controls{ padding:10px 16px 14px; flex-shrink:0; }
+.controls{
+  padding:10px 16px calc(14px + var(--bottom-ui-safe));
+  flex-shrink:0;
+  background:linear-gradient(180deg,rgba(3,5,6,0),rgba(3,5,6,0.92) 28%,rgba(3,5,6,0.98));
+}
 .btn{
   width:100%;
   border:none;
