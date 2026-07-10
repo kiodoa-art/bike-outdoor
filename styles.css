@@ -1,5 +1,5 @@
 :root{
-  --bg:#030506;
+  --bg:#000000;
   --bg-2:#070a0d;
   --panel:rgba(18,22,28,0.88);
   --panel-2:rgba(25,30,38,0.92);
@@ -38,9 +38,10 @@
 
 *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 [hidden]{ display:none!important; }
-html,body{ height:100%; }
+html,body{ height:100%; background:#000000; }
 body{
   margin:0;
+  background-color:#000000;
   background:
     radial-gradient(circle at 20% -10%, rgba(53,200,255,0.16), transparent 34%),
     radial-gradient(circle at 100% 20%, rgba(163,107,255,0.13), transparent 32%),
@@ -69,6 +70,15 @@ button{ cursor:pointer; }
   pointer-events:none;
   background:linear-gradient(180deg,rgba(255,255,255,0.035),transparent 22%,rgba(255,255,255,0.018));
   z-index:-1;
+}
+
+
+/* Android/PWA system bar cleanup. The system navigation buttons themselves are OS-owned,
+   but this keeps the area behind/around them dark instead of default white. */
+@supports (padding: max(0px)){
+  html, body, #app{
+    min-height:100%;
+  }
 }
 
 /* dim mode: app-level visual dimming only. Browser PWAs cannot set Android brightness. */

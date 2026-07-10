@@ -538,9 +538,38 @@ function initSettingsDrawer() {
   $('aboutCloseBtn').addEventListener('click', () => ui.hideModal('aboutModal'));
 }
 
+
+// ---------------- PWA fullscreen helper ----------------
+let fullscreenAttempted = false;
+function isInstalledPwa() {
+  return window.matchMedia?.('(display-mode: fullscreen)').matches
+    || window.matchMedia?.('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+}
+async function tryEnterFullscreen() {
+  if (fullscreenAttempted) return;
+  fullscreenAttempted = true;
+  if (!document.fullscreenEnabled || document.fullscreenElement) return;
+
+  // Browsers only allow fullscreen after a real tap/click.
+  // This means it cannot be forced on cold app launch, but it can happen
+  // when the user starts the ride or taps inside the installed PWA.
+  try {
+    await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+  } catch {
+    // Ignore: Android/Edge/Chrome may reject this depending on launch mode.
+  }
+}
+
+function initFullscreenAssist() {
+  document.addEventListener('pointerdown', () => {
+    if (isInstalledPwa()) tryEnterFullscreen();
+  }, { once: true, passive: true });
+}
+
 // ---------------- Ride control button wiring ----------------
 function initControls() {
-  $('startBtn').addEventListener('click', startRide);
+  $('startBtn').addEventListener('click', () => { tryEnterFullscreen(); startRide(); });
   $('lapBtn').addEventListener('click', addLap);
   $('pauseBtn').addEventListener('click', () => {
     if (ride.rideState === 'recording') pauseRide(false);
@@ -559,6 +588,7 @@ async function boot() {
   ui.initDimWatchers();
   ui.setDimEnabled(settings.autoDim);
   initSettingsDrawer();
+  initFullscreenAssist();
   initControls();
 
   rideMap.init();
