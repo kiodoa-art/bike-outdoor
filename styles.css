@@ -118,6 +118,19 @@ body.dim .tabswitch-indicator{ box-shadow:none; }
 .topbar-title{ display:flex; flex-direction:column; align-items:center; line-height:1.1; }
 .app-name{ font-size:16px; font-weight:850; letter-spacing:0.2px; }
 .app-subtitle{ font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:1.5px; margin-top:4px; font-weight:800; }
+.app-version-badge{
+  margin-top:5px;
+  color:var(--cyan);
+  background:rgba(53,200,255,0.10);
+  border:1px solid rgba(53,200,255,0.20);
+  border-radius:999px;
+  padding:3px 9px;
+  font-size:9px;
+  line-height:1;
+  font-weight:950;
+  letter-spacing:0.9px;
+  text-transform:uppercase;
+}
 
 /* ============ TAB SWITCHER ============ */
 .tabswitch{
@@ -510,6 +523,8 @@ body.dim .tabswitch-indicator{ box-shadow:none; }
 .drawer-close-btn svg{ width:20px; height:20px; stroke:currentColor; stroke-width:2.5; stroke-linecap:round; fill:none; }
 .drawer-section-title{ margin:16px 0 2px; color:var(--text-faint); font-size:10px; font-weight:950; letter-spacing:1.3px; text-transform:uppercase; }
 .drawer-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); font-size:14px; }
+.drawer-row > div{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+.drawer-row > div small{ color:var(--text-faint); font-size:11px; font-weight:700; line-height:1.25; }
 .drawer-row-about{ border-bottom:none; }
 .drawer-row-split{ justify-content:stretch; }
 .drawer-row-split .btn-mini{ flex:1; }
@@ -539,6 +554,8 @@ body.dim .tabswitch-indicator{ box-shadow:none; }
   font-weight:700;
 }
 .btn-mini{ background:rgba(255,255,255,0.075); color:var(--cyan); border:1px solid var(--line); border-radius:999px; padding:8px 16px; font-size:12px; font-weight:850; }
+.btn-mini:disabled{ opacity:.58; cursor:wait; }
+.btn-mini-update{ color:var(--green); border-color:rgba(56,248,155,0.24); background:rgba(56,248,155,0.08); }
 .btn-mini-danger{ color:var(--red); }
 .switch{ position:relative; width:46px; height:27px; display:inline-block; flex-shrink:0; }
 .switch input{ opacity:0; width:0; height:0; }
@@ -576,6 +593,7 @@ body.dim .tabswitch-indicator{ box-shadow:none; }
 .export-summary .es-label{ display:block; font-size:9.2px; color:var(--text-faint); font-weight:900; letter-spacing:0.65px; }
 .export-summary .es-value{ display:block; font-size:15px; font-weight:850; margin-top:3px; }
 .about-text{ font-size:13px; }
+.about-version{ margin-top:-8px!important; margin-bottom:16px!important; color:var(--cyan)!important; font-size:12.5px!important; }
 .about-list{ padding-left:18px; font-size:12.5px; color:var(--text-dim); line-height:1.6; margin:0 0 16px; }
 
 /* ============ TOAST ============ */

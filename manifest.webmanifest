@@ -1,7 +1,7 @@
 {
   "name": "Bike Outdoor",
   "short_name": "BikeOutdoor",
-  "description": "Outdoor cykel-tracker med GPS-rute og live data. Eksporterer til Training.",
+  "description": "Outdoor cykel-tracker med GPS-rute, live data og manuel PWA-opdatering. Eksporterer til Training.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "fullscreen",
@@ -38,5 +38,6 @@
     "fullscreen",
     "standalone",
     "minimal-ui"
-  ]
+  ],
+  "version": "v9-update-button"
 }

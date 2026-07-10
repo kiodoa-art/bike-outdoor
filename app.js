@@ -13,6 +13,8 @@ const AUTO_PAUSE_SPEED_KMH = 2;
 const AUTO_PAUSE_TICKS = 8; // ~8s below threshold before auto-pausing
 
 const SETTINGS_KEY = 'bikeOutdoorSettingsV2';
+const APP_VERSION = 'v9-update-button';
+const APP_VERSION_LABEL = 'Bike Outdoor v9 · opdateringsknap';
 
 const DEFAULT_SETTINGS = {
   autoDim: true,
@@ -461,10 +463,55 @@ async function discardSavedRide() {
   ui.showToast('Ufærdig tur slettet');
 }
 
+
+// ---------------- App version / update ----------------
+function setAppVersionLabels() {
+  const shortLabel = APP_VERSION.replace('v', 'V');
+  const versionBadge = $('versionBadge');
+  const appVersionLabel = $('appVersionLabel');
+  if (versionBadge) versionBadge.textContent = shortLabel;
+  if (appVersionLabel) appVersionLabel.textContent = APP_VERSION_LABEL;
+}
+
+async function forceAppUpdate() {
+  const updateBtn = $('forceUpdateBtn');
+  if (updateBtn) {
+    updateBtn.disabled = true;
+    updateBtn.textContent = 'Opdaterer…';
+  }
+
+  ui.showToast('Opdaterer app…');
+
+  try {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.update().catch(() => {})));
+
+      for (const registration of registrations) {
+        if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+    }
+
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys
+        .filter((key) => key.startsWith('bike-outdoor-'))
+        .map((key) => caches.delete(key)));
+    }
+  } catch {
+    // Reload anyway. A failed cache cleanup is not worth blocking the user.
+  }
+
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.set('appUpdate', String(Date.now()));
+  window.location.replace(nextUrl.toString());
+}
+
 // ---------------- Settings drawer wiring ----------------
 function initSettingsDrawer() {
   $('settingsBtn').addEventListener('click', () => ui.showModal('settingsDrawer'));
   $('closeDrawerBtn').addEventListener('click', () => ui.hideModal('settingsDrawer'));
+  $('forceUpdateBtn').addEventListener('click', forceAppUpdate);
 
   $('autoDimToggle').checked = settings.autoDim;
   $('autoPauseToggle').checked = settings.autoPause;
@@ -587,6 +634,7 @@ async function boot() {
   ui.initTabs((tab) => { if (tab === 'map') setTimeout(() => rideMap.invalidateSize(), 50); });
   ui.initDimWatchers();
   ui.setDimEnabled(settings.autoDim);
+  setAppVersionLabels();
   initSettingsDrawer();
   initFullscreenAssist();
   initControls();

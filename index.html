@@ -25,6 +25,7 @@
     <div class="topbar-title">
       <span class="app-name">Bike Outdoor</span>
       <span class="app-subtitle" id="subtitleLabel">Live Ride</span>
+      <span class="app-version-badge" id="versionBadge">V9</span>
     </div>
     <button id="settingsBtn" class="icon-btn" aria-label="Indstillinger">
       <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1h.1a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
@@ -259,6 +260,19 @@
       <button id="clearRouteBtn" class="btn-mini btn-mini-danger">Fjern rute</button>
     </div>
 
+    <div class="drawer-section-title">System</div>
+    <div class="drawer-row">
+      <span>App version</span>
+      <span id="appVersionLabel" class="drawer-value">Bike Outdoor v9</span>
+    </div>
+    <div class="drawer-row">
+      <div>
+        <span>Opdater app</span>
+        <small>Henter nyeste filer og rydder gammel PWA-cache</small>
+      </div>
+      <button id="forceUpdateBtn" class="btn-mini btn-mini-update" type="button">Opdater</button>
+    </div>
+
     <div class="drawer-section-title">Data</div>
     <div class="drawer-row">
       <span>Eksportér seneste tur</span>
@@ -312,6 +326,7 @@
   <div class="modal-sheet">
     <h2>Om Bike Outdoor</h2>
     <p class="about-text">Bike Outdoor er en statisk PWA uden backend, login eller cloud. Data gemmes kun lokalt på enheden og eksporteres som JSON til Training-appen.</p>
+    <p class="about-version"><strong>Version:</strong> <span>Bike Outdoor v9 · opdateringsknap</span></p>
     <ul class="about-list">
       <li>Web Bluetooth kræver en understøttet Android-browser (fx Chrome).</li>
       <li>Speed/kadence-sensorer skal sende Bluetooth LE Cycling Speed and Cadence.</li>

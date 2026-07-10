@@ -2,7 +2,7 @@
 // Bump CACHE_NAME for every released build. New service workers take control immediately,
 // clear old caches, and refresh open app windows so GitHub Pages does not hang on old files.
 
-const CACHE_NAME = 'bike-outdoor-v8-fullscreen-dark-nav';
+const CACHE_NAME = 'bike-outdoor-v9-update-button';
 const APP_SHELL = [
   './',
   './index.html',
@@ -67,4 +67,9 @@ self.addEventListener('fetch', (event) => {
 
   // Network-first prevents old app.js/styles.css/index.html from sticking forever.
   event.respondWith(networkFirst(event.request));
+});
+
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
