@@ -156,3 +156,36 @@ export function showToast(message) {
 // ============ Generic modal helpers ============
 export function showModal(id) { $(id).hidden = false; }
 export function hideModal(id) { $(id).hidden = true; }
+
+
+// ============ Rear radar ============
+export function renderRadar({ connected, vehicles = [], battery = null, level = 'clear', message = '' }) {
+  const panel = $('radarPanel');
+  const views = $('views');
+  if (!panel || !views) return;
+
+  const shouldShow = connected || message || vehicles.length > 0;
+  panel.hidden = !shouldShow;
+  views.classList.toggle('radar-active', shouldShow);
+  panel.dataset.level = level;
+
+  $('radarCount').textContent = String(vehicles.length);
+  const nearest = vehicles[0] || null;
+  $('radarNearest').textContent = nearest ? `${Math.round(nearest.distanceMeters)} m` : (connected ? 'FRI' : 'OFFLINE');
+  $('radarSpeed').textContent = nearest && Number.isFinite(nearest.approachSpeedKmh)
+    ? `${Math.round(nearest.approachSpeedKmh)} km/h`
+    : (Number.isFinite(battery) ? `${Math.round(battery)}% batteri` : '-- km/h');
+  $('radarPanelStatus').textContent = message || (connected ? (vehicles.length ? 'KØRETØJ BAGVED' : 'VEJEN ER FRI') : 'FORBINDELSE MISTET');
+
+  const track = $('radarTrack');
+  track.querySelectorAll('.radar-vehicle').forEach((el) => el.remove());
+  vehicles.slice(0, 8).forEach((vehicle) => {
+    const dot = document.createElement('span');
+    const distance = Math.max(0, Math.min(140, Number(vehicle.distanceMeters) || 0));
+    const topPercent = ((140 - distance) / 140) * 88 + 3;
+    dot.className = `radar-vehicle ${vehicle.approachSpeedKmh >= 80 ? 'danger' : 'warning'}`;
+    dot.style.top = `${topPercent}%`;
+    dot.title = `${Math.round(distance)} m · ${Math.round(vehicle.approachSpeedKmh || 0)} km/h`;
+    track.appendChild(dot);
+  });
+}

@@ -13,13 +13,15 @@ const AUTO_PAUSE_SPEED_KMH = 2;
 const AUTO_PAUSE_TICKS = 8; // ~8s below threshold before auto-pausing
 
 const SETTINGS_KEY = 'bikeOutdoorSettingsV2';
-const APP_VERSION = 'v9-update-button';
-const APP_VERSION_LABEL = 'Bike Outdoor v9 · opdateringsknap';
+const APP_VERSION = 'v10-varia-radar';
+const APP_VERSION_LABEL = 'Bike Outdoor v10 · Garmin Varia radar';
 
 const DEFAULT_SETTINGS = {
   autoDim: true,
   autoPause: true,
-  wheelCircumferenceMm: 2105
+  wheelCircumferenceMm: 2105,
+  radarSound: true,
+  radarVibration: true
 };
 
 function loadSettings() {
@@ -65,7 +67,13 @@ function freshRide() {
     samples: [],
     laps: [],
     routePoints: [], // actual ridden GPS points for map redraw on resume
-    plannedRoute: null
+    plannedRoute: null,
+    radarConnected: false,
+    radarBattery: null,
+    radarVehicles: [],
+    radarNearestDistanceMeters: null,
+    radarApproachSpeedKmh: null,
+    radarPassCount: 0
   };
 }
 
@@ -77,6 +85,14 @@ let lastFixTimestamp = null;
 let speedSensorConnected = false;
 let cadenceSensorConnected = false;
 let lastSpeedSensorAt = 0;
+let radarConnected = false;
+let radarBattery = null;
+let radarVehicles = [];
+let radarSeenIds = new Map();
+let radarLastLevel = 'clear';
+let radarLastAlertAt = 0;
+let radarAudioContext = null;
+let radarTestTimer = null;
 
 function useWheelSpeedAndDistance() {
   return speedSensorConnected || ride.distanceSource === 'wheel';
@@ -87,6 +103,80 @@ function markStaleSpeedSensorIfNeeded() {
   if (lastSpeedSensorAt > 0 && Date.now() - lastSpeedSensorAt > 4500) {
     ride.currentSpeedKmh = 0;
   }
+}
+
+function getRadarLevel(vehicles) {
+  if (!vehicles.length) return 'clear';
+  const fastest = Math.max(...vehicles.map((vehicle) => Number(vehicle.approachSpeedKmh) || 0));
+  return fastest >= 80 ? 'danger' : 'warning';
+}
+
+function syncRadarRideState() {
+  ride.radarConnected = radarConnected;
+  ride.radarBattery = radarBattery;
+  ride.radarVehicles = radarVehicles.map((vehicle) => ({ ...vehicle }));
+  ride.radarNearestDistanceMeters = radarVehicles[0]?.distanceMeters ?? null;
+  ride.radarApproachSpeedKmh = radarVehicles[0]?.approachSpeedKmh ?? null;
+}
+
+function renderRadar(message = '') {
+  const level = radarConnected ? getRadarLevel(radarVehicles) : (message ? 'error' : 'clear');
+  ui.renderRadar({ connected: radarConnected, vehicles: radarVehicles, battery: radarBattery, level, message });
+}
+
+function countNewRadarPasses(vehicles) {
+  const now = Date.now();
+  for (const [id, lastSeen] of radarSeenIds.entries()) {
+    if (now - lastSeen > 10000) radarSeenIds.delete(id);
+  }
+  for (const vehicle of vehicles) {
+    if (!radarSeenIds.has(vehicle.id)) ride.radarPassCount = (ride.radarPassCount || 0) + 1;
+    radarSeenIds.set(vehicle.id, now);
+  }
+}
+
+function ensureRadarAudio() {
+  if (!radarAudioContext) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) radarAudioContext = new AudioContextClass();
+  }
+  if (radarAudioContext?.state === 'suspended') radarAudioContext.resume().catch(() => {});
+}
+
+function playRadarTone(level) {
+  if (!settings.radarSound) return;
+  ensureRadarAudio();
+  if (!radarAudioContext) return;
+  const now = radarAudioContext.currentTime;
+  const frequencies = level === 'danger' ? [960, 1120] : [760];
+  frequencies.forEach((frequency, index) => {
+    const osc = radarAudioContext.createOscillator();
+    const gain = radarAudioContext.createGain();
+    const start = now + index * 0.17;
+    osc.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.16, start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
+    osc.connect(gain).connect(radarAudioContext.destination);
+    osc.start(start);
+    osc.stop(start + 0.13);
+  });
+}
+
+function alertRadarIfNeeded(previousVehicles, vehicles) {
+  const level = getRadarLevel(vehicles);
+  const previousIds = new Set(previousVehicles.map((vehicle) => vehicle.id));
+  const hasNewVehicle = vehicles.some((vehicle) => !previousIds.has(vehicle.id));
+  const escalated = level === 'danger' && radarLastLevel !== 'danger';
+  const now = Date.now();
+  if ((hasNewVehicle || escalated) && now - radarLastAlertAt > 900) {
+    playRadarTone(level);
+    if (settings.radarVibration && navigator.vibrate) {
+      navigator.vibrate(level === 'danger' ? [140, 80, 200] : 140);
+    }
+    radarLastAlertAt = now;
+  }
+  radarLastLevel = level;
 }
 
 // ---------------- Sensors ----------------
@@ -137,6 +227,46 @@ const sensors = createSensorManager({
     else if (state === 'connecting') ui.setStatusChip('statusCadence', 'searching', 'FORBINDER');
     else if (state === 'unsupported') ui.setStatusChip('statusCadence', 'error', 'INTET BLE');
     else ui.setStatusChip('statusCadence', 'off', 'FRA');
+  },
+  onRadar: (vehicles) => {
+    const previousVehicles = radarVehicles;
+    radarVehicles = Array.isArray(vehicles) ? vehicles : [];
+    if (radarConnected) {
+      countNewRadarPasses(radarVehicles);
+      alertRadarIfNeeded(previousVehicles, radarVehicles);
+    }
+    syncRadarRideState();
+    renderRadar();
+  },
+  onRadarBattery: (level) => {
+    radarBattery = Number.isFinite(level) ? level : null;
+    syncRadarRideState();
+    renderRadar();
+  },
+  onRadarStateChange: (state) => {
+    radarConnected = state === 'connected';
+    if (state === 'connected') {
+      ui.setStatusChip('statusRadar', 'ok', 'CONNECT');
+      if (radarVehicles.length) alertRadarIfNeeded([], radarVehicles);
+      syncRadarRideState();
+      renderRadar();
+    } else if (state === 'connecting') {
+      ui.setStatusChip('statusRadar', 'searching', 'FORBINDER');
+      ui.renderRadar({ connected: false, vehicles: [], battery: radarBattery, level: 'clear', message: 'FORBINDER' });
+    } else if (state === 'unsupported') {
+      ui.setStatusChip('statusRadar', 'error', 'INTET BLE');
+      renderRadar('WEB BLUETOOTH MANGLER');
+    } else if (state === 'off') {
+      ui.setStatusChip('statusRadar', 'off', 'FRA');
+      radarVehicles = [];
+      syncRadarRideState();
+      renderRadar();
+    } else {
+      ui.setStatusChip('statusRadar', 'error', 'AFBRUDT');
+      radarVehicles = [];
+      syncRadarRideState();
+      renderRadar('FORBINDELSE MISTET');
+    }
   }
 });
 
@@ -261,6 +391,8 @@ async function clearActiveRoute() {
 // ---------------- Ride lifecycle ----------------
 function startRide() {
   ride = freshRide();
+  radarSeenIds = new Map();
+  syncRadarRideState();
   ride.wheelCircumferenceMm = settings.wheelCircumferenceMm;
   ride.rideState = 'recording';
   ride.startTime = new Date().toISOString();
@@ -331,6 +463,11 @@ function recordSample(isPaused) {
     lon: ride.lastLon,
     altitude: ride.currentAltitude,
     gpsAccuracy: ride.gpsAccuracy,
+    radarConnected: ride.radarConnected,
+    radarBattery: ride.radarBattery,
+    radarNearestDistanceMeters: ride.radarNearestDistanceMeters,
+    radarApproachSpeedKmh: ride.radarApproachSpeedKmh,
+    radarVehicles: ride.radarVehicles?.map((vehicle) => ({ ...vehicle })) || [],
     isPaused: !!isPaused
   };
   ride.samples.push(sample);
@@ -429,6 +566,7 @@ async function checkForUnfinishedRide() {
 
 function resumeSavedRide(saved) {
   ride = saved;
+  syncRadarRideState();
   ride.rideState = 'recording';
   document.body.dataset.rideActive = '1';
   $('startBtn').hidden = true;
@@ -516,6 +654,8 @@ function initSettingsDrawer() {
   $('autoDimToggle').checked = settings.autoDim;
   $('autoPauseToggle').checked = settings.autoPause;
   $('wheelCircumferenceInput').value = settings.wheelCircumferenceMm;
+  $('radarSoundToggle').checked = settings.radarSound;
+  $('radarVibrationToggle').checked = settings.radarVibration;
 
   $('connectPowerBtn').addEventListener('click', async () => {
     try { await sensors.connectPower(); }
@@ -525,6 +665,40 @@ function initSettingsDrawer() {
     try { await sensors.connectHeartRate(); }
     catch { ui.showToast('Kunne ikke forbinde til pulsmåler'); }
   });
+  $('connectRadarBtn').addEventListener('click', async () => {
+    try {
+      ensureRadarAudio();
+      await sensors.connectRadar();
+      ui.showToast('Garmin Varia radar forbundet');
+    } catch (err) {
+      const cancelled = err?.name === 'NotFoundError';
+      ui.showToast(cancelled ? 'Radarvalg annulleret' : 'Kunne ikke forbinde til radaren');
+    }
+  });
+  $('testRadarBtn').addEventListener('click', () => {
+    clearTimeout(radarTestTimer);
+    ensureRadarAudio();
+    const wasConnected = radarConnected;
+    const previousVehicles = radarVehicles;
+    const previousLevel = radarLastLevel;
+    radarConnected = true;
+    radarVehicles = [
+      { id: 201, distanceMeters: 118, approachSpeedKmh: 54 },
+      { id: 202, distanceMeters: 62, approachSpeedKmh: 92 }
+    ];
+    alertRadarIfNeeded([], radarVehicles);
+    syncRadarRideState();
+    renderRadar('TEST · 2 KØRETØJER');
+    ui.hideModal('settingsDrawer');
+    radarTestTimer = setTimeout(() => {
+      radarConnected = wasConnected;
+      radarVehicles = previousVehicles;
+      radarLastLevel = previousLevel;
+      syncRadarRideState();
+      renderRadar(wasConnected ? '' : '');
+    }, 7000);
+  });
+
   $('connectSpeedBtn').addEventListener('click', async () => {
     try {
       sensors.setWheelCircumferenceMm(settings.wheelCircumferenceMm);
@@ -558,6 +732,8 @@ function initSettingsDrawer() {
     saveSettings();
   });
   $('autoPauseToggle').addEventListener('change', (e) => { settings.autoPause = e.target.checked; saveSettings(); });
+  $('radarSoundToggle').addEventListener('change', (e) => { settings.radarSound = e.target.checked; saveSettings(); if (e.target.checked) ensureRadarAudio(); });
+  $('radarVibrationToggle').addEventListener('change', (e) => { settings.radarVibration = e.target.checked; saveSettings(); });
 
   $('importGpxBtn').addEventListener('click', () => $('gpxFileInput').click());
   $('gpxFileInput').addEventListener('change', (e) => loadGpxFromFile(e.target.files?.[0]));
@@ -649,7 +825,10 @@ async function boot() {
     ui.setStatusChip('statusHr', 'error', 'INTET BLE');
     ui.setStatusChip('statusSpeed', 'error', 'INTET BLE');
     ui.setStatusChip('statusCadence', 'error', 'INTET BLE');
+    ui.setStatusChip('statusRadar', 'error', 'INTET BLE');
   }
+
+  if (sensors.isBleSupported()) sensors.reconnectKnownRadar().catch(() => {});
 
   await checkForUnfinishedRide();
 

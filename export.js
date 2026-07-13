@@ -49,7 +49,9 @@ export function buildRideJson(ride) {
     avgCadence: round(avg(cadences)),
     maxCadence: round(max(cadences)),
     avgSpeedKmh: round(avg(speeds), 1),
-    maxSpeedKmh: round(max(speeds), 1)
+    maxSpeedKmh: round(max(speeds), 1),
+    radarVehiclePasses: Number(ride.radarPassCount || 0),
+    radarBatteryEnd: Number.isFinite(ride.radarBattery) ? Math.round(ride.radarBattery) : null
   };
 
   return {
@@ -66,6 +68,11 @@ export function buildRideJson(ride) {
     elevationGainMeters: round(elevationGainMeters),
     sensorSettings: {
       wheelCircumferenceMm: Number.isFinite(ride.wheelCircumferenceMm) ? ride.wheelCircumferenceMm : null
+    },
+    radar: {
+      connectedAtEnd: !!ride.radarConnected,
+      batteryAtEnd: Number.isFinite(ride.radarBattery) ? Math.round(ride.radarBattery) : null,
+      vehiclePasses: Number(ride.radarPassCount || 0)
     },
     plannedRoute: ride.plannedRoute || null,
     summary,
@@ -85,6 +92,15 @@ export function buildRideJson(ride) {
       lon: Number.isFinite(s.lon) ? s.lon : null,
       altitude: Number.isFinite(s.altitude) ? s.altitude : null,
       gpsAccuracy: Number.isFinite(s.gpsAccuracy) ? s.gpsAccuracy : null,
+      radarConnected: !!s.radarConnected,
+      radarBattery: Number.isFinite(s.radarBattery) ? Math.round(s.radarBattery) : null,
+      radarNearestDistanceMeters: Number.isFinite(s.radarNearestDistanceMeters) ? s.radarNearestDistanceMeters : null,
+      radarApproachSpeedKmh: Number.isFinite(s.radarApproachSpeedKmh) ? s.radarApproachSpeedKmh : null,
+      radarVehicles: Array.isArray(s.radarVehicles) ? s.radarVehicles.map((vehicle) => ({
+        id: vehicle.id,
+        distanceMeters: vehicle.distanceMeters,
+        approachSpeedKmh: vehicle.approachSpeedKmh
+      })) : [],
       isPaused: !!s.isPaused
     }))
   };

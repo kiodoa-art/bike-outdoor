@@ -1,4 +1,4 @@
-// sensors.js — Web Bluetooth: Cycling Power, Heart Rate and Cycling Speed/Cadence sensors.
+// sensors.js — Web Bluetooth: Cycling Power, Heart Rate, Speed/Cadence and rear radar sensors.
 
 const CYCLING_POWER_SERVICE = 'cycling_power';
 const CYCLING_POWER_MEASUREMENT = 'cycling_power_measurement';
@@ -9,6 +9,12 @@ const HEART_RATE_MEASUREMENT = 'heart_rate_measurement';
 // UUID'er bruges direkte, fordi de virker mere stabilt på tværs af browsere end navne-aliases.
 const CSC_SERVICE = '00001816-0000-1000-8000-00805f9b34fb';
 const CSC_MEASUREMENT = '00002a5b-0000-1000-8000-00805f9b34fb';
+
+// Garmin Varia / compatible rear-view radar legacy BLE service.
+const RADAR_SERVICE = '6a4e3200-667b-11e3-949a-0800200c9a66';
+const RADAR_MEASUREMENT = '6a4e3203-667b-11e3-949a-0800200c9a66';
+const BATTERY_SERVICE = 'battery_service';
+const BATTERY_LEVEL = 'battery_level';
 
 const DEFAULT_WHEEL_CIRCUMFERENCE_MM = 2105;
 
@@ -126,6 +132,25 @@ function parseHeartRate(dataView) {
   return is16bit ? dataView.getUint16(1, true) : dataView.getUint8(1);
 }
 
+// Legacy radar payload: one header byte followed by 3-byte vehicle records.
+// Each record is [track id, distance in metres, approach speed in km/h].
+export function parseRadarMeasurement(dataView) {
+  if (!dataView || dataView.byteLength < 1) return [];
+  const bytes = new Uint8Array(dataView.buffer, dataView.byteOffset, dataView.byteLength);
+  const vehicles = [];
+
+  // Startup/heartbeat packets can be incomplete. Only decode complete triplets.
+  for (let offset = 1; offset + 2 < bytes.length; offset += 3) {
+    const id = bytes[offset];
+    const distanceMeters = bytes[offset + 1];
+    const approachSpeedKmh = bytes[offset + 2];
+    if (distanceMeters > 200) continue;
+    vehicles.push({ id, distanceMeters, approachSpeedKmh });
+  }
+
+  return vehicles.sort((a, b) => a.distanceMeters - b.distanceMeters);
+}
+
 export function createSensorManager({
   onPower,
   onCadence,
@@ -135,12 +160,17 @@ export function createSensorManager({
   onPowerStateChange,
   onHrStateChange,
   onSpeedStateChange,
-  onCadenceStateChange
+  onCadenceStateChange,
+  onRadar,
+  onRadarBattery,
+  onRadarStateChange
 }) {
   let powerDevice = null;
   let hrDevice = null;
   let speedDevice = null;
   let cadenceDevice = null;
+  let radarDevice = null;
+  let radarCharacteristic = null;
   let crankState = null;
   let speedCscState = null;
   let cadenceCscState = null;
@@ -293,6 +323,84 @@ export function createSensorManager({
     onCadenceStateChange?.('connected');
   }
 
+  async function connectRadar() {
+    if (!bleSupported()) { onRadarStateChange?.('unsupported'); return; }
+    try {
+      onRadarStateChange?.('connecting');
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [RADAR_SERVICE] }],
+        optionalServices: [RADAR_SERVICE, BATTERY_SERVICE]
+      });
+      radarDevice = device;
+      attachRadarDisconnectHandler(device);
+      await connectExistingRadar(device);
+    } catch (err) {
+      onRadarStateChange?.(err?.name === 'NotFoundError' ? 'off' : 'disconnected');
+      throw err;
+    }
+  }
+
+  function attachRadarDisconnectHandler(device) {
+    if (device.__bikeOutdoorRadarHandlerAttached) return;
+    device.__bikeOutdoorRadarHandlerAttached = true;
+    device.addEventListener('gattserverdisconnected', () => {
+      radarCharacteristic = null;
+      onRadar?.([]);
+      onRadarStateChange?.('disconnected');
+      attemptReconnect(device, connectExistingRadar);
+    });
+  }
+
+  async function connectExistingRadar(device) {
+    onRadarStateChange?.('connecting');
+    const server = device.gatt.connected ? device.gatt : await device.gatt.connect();
+    const service = await server.getPrimaryService(RADAR_SERVICE);
+    const char = await service.getCharacteristic(RADAR_MEASUREMENT);
+    radarCharacteristic = char;
+    await char.startNotifications();
+    char.removeEventListener('characteristicvaluechanged', handleRadarMeasurement);
+    char.addEventListener('characteristicvaluechanged', handleRadarMeasurement);
+    await connectRadarBattery(server);
+    onRadarStateChange?.('connected');
+  }
+
+  function handleRadarMeasurement(event) {
+    const vehicles = parseRadarMeasurement(event.target.value);
+    onRadar?.(vehicles);
+  }
+
+  async function connectRadarBattery(server) {
+    try {
+      const service = await server.getPrimaryService(BATTERY_SERVICE);
+      const char = await service.getCharacteristic(BATTERY_LEVEL);
+      const initial = await char.readValue();
+      if (initial.byteLength) onRadarBattery?.(initial.getUint8(0));
+      await char.startNotifications();
+      char.addEventListener('characteristicvaluechanged', (event) => {
+        const value = event.target.value;
+        if (value?.byteLength) onRadarBattery?.(value.getUint8(0));
+      });
+    } catch {
+      // Battery service is optional and may not be exposed by every compatible radar.
+    }
+  }
+
+  async function reconnectKnownRadar() {
+    if (!bleSupported() || typeof navigator.bluetooth.getDevices !== 'function') return false;
+    try {
+      const devices = await navigator.bluetooth.getDevices();
+      const known = devices.find((device) => /varia|rvr|rtl|rct|radar/i.test(device.name || ''));
+      if (!known) return false;
+      radarDevice = known;
+      attachRadarDisconnectHandler(known);
+      await connectExistingRadar(known);
+      return true;
+    } catch {
+      onRadarStateChange?.('disconnected');
+      return false;
+    }
+  }
+
   function attemptReconnect(device, reconnectFn, attempt = 1) {
     if (attempt > 5) return;
     setTimeout(async () => {
@@ -310,6 +418,8 @@ export function createSensorManager({
     connectHeartRate,
     connectSpeedSensor,
     connectCadenceSensor,
+    connectRadar,
+    reconnectKnownRadar,
     setWheelCircumferenceMm,
     isBleSupported: bleSupported,
     disconnectAll() {
@@ -317,6 +427,8 @@ export function createSensorManager({
       try { hrDevice?.gatt?.disconnect(); } catch { /* ignore */ }
       try { speedDevice?.gatt?.disconnect(); } catch { /* ignore */ }
       try { cadenceDevice?.gatt?.disconnect(); } catch { /* ignore */ }
+      try { radarCharacteristic?.removeEventListener('characteristicvaluechanged', handleRadarMeasurement); } catch { /* ignore */ }
+      try { radarDevice?.gatt?.disconnect(); } catch { /* ignore */ }
     }
   };
 }

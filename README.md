@@ -102,3 +102,10 @@ training-app-patch/     — minimal patch til Training-appens bike-json.js
 - Service worker cache-version er bumpet til `bike-outdoor-v3-gpx-route-mockup-ui`.
 
 Når appen ændres igen, skal `CACHE_NAME` i `sw.js` bumpes hver gang, så GitHub Pages/PWA ikke hænger i gammel version.
+
+
+## Garmin Varia radar (v10)
+
+Appen kan forbinde til Garmin Varia RVR315 og kompatible BLE-radarer via Web Bluetooth. Den viser op til otte køretøjer på en 0–140 m radarsøjle, giver lyd/vibration ved nye eller hurtigt nærmende køretøjer, viser batteriniveau når enheden eksponerer Battery Service og gemmer radarmålinger i turens JSON-samples.
+
+Radarvisningen er et ekstra hjælpemiddel og erstatter ikke opmærksomhed eller et blik bagud. Første forbindelse skal vælges manuelt via **Indstillinger → Garmin Varia radar → Forbind**.
