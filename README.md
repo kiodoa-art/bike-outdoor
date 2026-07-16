@@ -1,111 +1,96 @@
-# Bike Outdoor
+# Bike Workout V3.7.2
 
-En statisk PWA til outdoor cykelture. Ingen backend, intet login, ingen Home Assistant.
-Appen tracker, viser live data, kan følge en importeret GPX-rute på farvet kort og eksporterer én JSON-fil pr. tur, som kan importeres direkte i din eksisterende Training-app.
+Bike Workout er en statisk PWA til indendørs cykeltræning med Wahoo KICKR. Appen læser live-data via Web Bluetooth, kan importere ZWO-workouts og kan styre target watt via FTMS/ERG.
 
-## Hvad appen gør
+## Funktioner
 
-- Forbinder til en Stages powermeter og en pulsmåler via Web Bluetooth
-- Bruger telefonens GPS til at spore kørt rute, distance, hastighed og højdemeter
-- Viser live data i to visninger: **Live** og **Map**
-- Kan importere en **GPX-rute**, så du kan følge en planlagt rute på kortet
-- Viser planlagt rute og faktisk kørt spor som to forskellige linjer
-- Viser om du er på ruten, cirka afstand fra ruten og cirka distance til slut
-- Autogemmer turen løbende i IndexedDB, så en uafsluttet tur kan genoptages, eksporteres eller slettes
-- Eksporterer en `ride-YYYY-MM-DD-HHMM-outdoor.json`-fil, som Training-appens eksisterende Bike JSON-import kan læse
+- Forbindelse til KICKR via Web Bluetooth
+- Separat forbindelse til Bluetooth-pulsmåler
+- Automatisk genforbindelse til tidligere godkendt udstyr
+- Live-visning af watt, kadence, puls, tid, gennemsnit, maksimum og distance
+- Pulsgraf for de seneste ti minutter
+- Import af `.zwo`- og `.xml`-workouts
+- Wattberegning ud fra FTP
+- FTMS-baseret ERG-styring, når træneren understøtter Control Point
+- Workout-kommentarer og intervalvisning
+- Testvisning med simulerede data
+- Lagring af afsluttede ture som JSON i valgt mappe
+- Automatisk download som fallback, hvis browseren ikke understøtter mappevalg
+- Installerbar PWA med offline-cache
 
-Training-appen er stadig eneste sted for historik, analyse, rekorder og grafer. Bike Outdoor gemmer og eksporterer — intet andet.
+## Krav
 
-## GPX-ruter
+Appen skal åbnes via HTTPS eller `localhost`. Web Bluetooth virker bedst i en Chromium-baseret browser som Microsoft Edge eller Google Chrome.
 
-Lav ruten i fx Komoot, Strava, Garmin Connect, Ride with GPS eller en anden ruteplanlægger, og eksportér den som `.gpx`.
+På Android skal browseren have Bluetooth-tilladelse. På Windows skal Bluetooth være slået til, og KICKR/pulsmåleren må ikke allerede være låst af en anden app.
 
-I appen:
-
-1. Åbn menuen/indstillinger
-2. Tryk **Indlæs** ved GPX-rute
-3. Vælg GPX-filen
-4. Gå til **Map**-fanen
-
-Kortet viser nu:
-
-- planlagt GPX-rute som lilla linje
-- dit faktiske kørte spor som blå linje
-- din aktuelle GPS-position som blå markør
-- start og mål-markør
-- cirka distance til slut
-- cirka afstand fra ruten
-
-Der er ikke fuld turn-by-turn navigation endnu. Første version er bevidst holdt enkel: tydelig rute, tydelig position, live tracking og JSON-eksport.
-
-## Kør lokalt
-
-Filerne er 100% statiske. Servér mappen med en simpel HTTP-server, fx:
-
-```bash
-python3 -m http.server
-```
-
-Åbn ikke `index.html` direkte som `file://`. Service worker, GPS og Bluetooth kræver HTTPS eller `localhost`.
-
-## GitHub Pages
-
-Upload indholdet af denne mappe til roden af et repository og aktivér GitHub Pages fra `main` / `(root)`. Alle stier er relative, så appen virker både på `brugernavn.github.io/repo/` og eget domæne.
-
-## Kompatibilitet med Training-appen
-
-Den eksporterede JSON følger Training-appens eksisterende Bike ride-format (`bike-json.js`): `version`, `source`, `rideId`, `startTime`, `endTime`, `summary` og `samples`.
-
-Der er tilføjet outdoor-felter som `sport`, `movingTimeSec`, `elevationGainMeters`, `plannedRoute`, `laps`, samt `lat`/`lon`/`altitude`/`gpsAccuracy`/`isPaused` på hvert sample. `source` sættes til `"bike_outdoor"`, så Training-appen kan skelne outdoor-ture fra indendørs Bike-ture og Garmin-importer.
-
-**Én lille ændring i Training-appen kan være nødvendig** for at ture fra Bike Outdoor bliver mærket som outdoor i stedet for indoor. Den vedlagte `training-app-patch/bike-json.js` ændrer kun den del, så et eventuelt `sport`-felt i ride-JSON'en bruges, hvis det findes, og ellers falder tilbage til `"indoor_cycling"` som før.
-
-Gamle Bike- og Garmin-filer bør ikke påvirkes.
-
-## Begrænsninger
-
-- Web Bluetooth kræver en understøttet Android-browser, typisk Chrome på Android.
-- GPS kræver lokationstilladelse.
-- Tracking er lavet til at køre, mens appen er åben og synlig på skærmen.
-- Låst skærm / baggrundstracking kan være upålidelig i en browser.
-- En native Android-app ville være nødvendig for fuldt pålidelig baggrundstracking.
-- Kortfliser kræver internet, medmindre de allerede er cachet.
-- GPS-tracking og JSON-eksport virker stadig, selv hvis kortfliser ikke loader.
-- Appen bruger ikke Home Assistant.
-
-## Filstruktur
+## Projektstruktur
 
 ```text
-index.html              — app-skal, Live/Map tabs, GPX-import-knapper
-styles.css              — rundet mørkt mockup-inspireret design
-app.js                  — turens livscyklus, GPX-import og state
-sensors.js              — Web Bluetooth: Cycling Power + Heart Rate
-gps.js                  — watchPosition, distance/hastighed/højdemeter
-storage.js              — IndexedDB autosave, GPX-rute og krise-genoprettelse
-map.js                  — Leaflet farvekort, GPX-rute, kørt spor, markør
-route.js                — GPX-parser og route-statusberegning
-export.js               — bygger Training-kompatibel JSON og trigger download
-ui.js                   — tabs, rendering, dim-tilstand, wake lock, toasts
-sw.js                   — service worker med aggressiv update-håndtering
-manifest.webmanifest    — PWA-manifest
-icons/                  — app-ikoner
-training-app-patch/     — minimal patch til Training-appens bike-json.js
+bike-workout-main/
+├── app.js                 Bluetooth, workout, ERG, turregistrering og UI-logik
+├── icons/
+│   ├── apple-touch-icon-180.png
+│   ├── icon-192.png
+│   ├── icon-512.png
+│   └── icon-maskable-512.png
+├── index.html             Appens brugerflade
+├── manifest.webmanifest   PWA-konfiguration
+├── README.md
+├── styles.css             Layout og design
+├── sw.js                  Service worker og offline-cache
+└── wrangler.jsonc         Cloudflare Workers/Assets-konfiguration
 ```
 
-## Version 3 changes
+Projektet kræver ingen build-proces og har ingen JavaScript-afhængigheder.
 
-- GPX-import tilføjet.
-- Planlagt rute og kørt rute tegnes separat.
-- Pre-ride GPS-punkter tegnes ikke længere som kørt spor.
-- Map-fanen viser rutenavn, distance til slut og afstand fra ruten.
-- UI er gjort blødere, mørkere, mere rundet og tættere på mockup-stilen.
-- Service worker cache-version er bumpet til `bike-outdoor-v3-gpx-route-mockup-ui`.
+## Lokal test
 
-Når appen ændres igen, skal `CACHE_NAME` i `sw.js` bumpes hver gang, så GitHub Pages/PWA ikke hænger i gammel version.
+Start en simpel lokal webserver i projektmappen:
+
+```bash
+python -m http.server 8000
+```
+
+Åbn derefter:
+
+```text
+http://localhost:8000
+```
+
+Testvisningen kan startes fra **Indstillinger → Test og fejlfinding** eller med URL-parameteren:
+
+```text
+http://localhost:8000/?demo=1
+```
+
+## Deployment på Cloudflare
+
+`wrangler.jsonc` peger på projektmappen som statisk asset-mappe. Projektet kan deployes direkte fra GitHub via Cloudflare eller med Wrangler:
+
+```bash
+npx wrangler deploy
+```
+
+Efter en ny deployment opretter service workeren en versionsbestemt cache og sletter ældre Bike Workout-caches, når opdateringen aktiveres.
+
+## Turfiler
+
+Når en tur afsluttes, gemmes en JSON-fil med turens metadata, sammenfatning og samples. Ved understøttelse af File System Access API kan en fast mappe vælges i indstillingerne. Ellers downloades filen gennem browseren.
+
+## Vigtige begrænsninger
+
+- ERG virker kun, hvis KICKR eksponerer FTMS Fitness Machine Control Point.
+- Browseren kræver normalt en brugerhandling første gang et Bluetooth-produkt godkendes.
+- En anden cykelapp kan blokere Bluetooth-forbindelsen.
+- En ny service worker venter under en aktiv tur og aktiveres først bagefter eller ved manuel bekræftelse.
 
 
-## Garmin Varia radar (v10)
+## PWA og opdateringer
 
-Appen kan forbinde til Garmin Varia RVR315 og kompatible BLE-radarer via Web Bluetooth. Den viser op til otte køretøjer på en 0–140 m radarsøjle, giver lyd/vibration ved nye eller hurtigt nærmende køretøjer, viser batteriniveau når enheden eksponerer Battery Service og gemmer radarmålinger i turens JSON-samples.
-
-Radarvisningen er et ekstra hjælpemiddel og erstatter ikke opmærksomhed eller et blik bagud. Første forbindelse skal vælges manuelt via **Indstillinger → Garmin Varia radar → Forbind**.
+- Installeres fra Edge/Chrome som en selvstændig PWA.
+- Manifestet foretrækker fuldskærmsvisning og falder tilbage til standalone.
+- Appskallen caches lokalt og kan åbnes offline.
+- Appen kontrollerer automatisk for opdateringer ved opstart, når den bliver synlig igen og hvert 30. minut.
+- En ventende opdatering aktiveres automatisk, når der ikke kører en tur eller workout. Under en aktiv tur venter opdateringen, så data ikke går tabt.
+- Manuel opdateringskontrol findes under **Indstillinger → App og opdatering**.

@@ -1,397 +1,268 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="da">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<title>Bike Outdoor</title>
-<meta name="description" content="Outdoor cykel-tracker. Live data, GPS-rute og eksport til Training." />
-<meta name="theme-color" content="#000000" />
-<meta name="color-scheme" content="dark" />
-<meta name="mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<link rel="manifest" href="manifest.webmanifest" />
-<link rel="icon" href="icons/icon-192.png" />
-<link rel="apple-touch-icon" href="icons/icon-192.png" />
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-<link rel="stylesheet" href="styles.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f7fb">
+  <meta name="description" content="Bike Workout V3.7.2 – landscape-dashboard til Wahoo KICKR.">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Bike Workout V3.7.2</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon-180.png">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-
-<div id="app" class="app">
-
-  <!-- ============ HEADER ============ -->
-  <header class="topbar">
-    <div class="topbar-title">
-      <span class="app-name">Bike Outdoor</span>
-      <span class="app-subtitle" id="subtitleLabel">Live Ride</span>
-      <span class="app-version-badge" id="versionBadge">V10</span>
-    </div>
-    <button id="settingsBtn" class="icon-btn" aria-label="Indstillinger">
-      <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1h.1a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
-    </button>
-  </header>
-
-  <!-- ============ TAB SWITCHER ============ -->
-  <div class="tabswitch" role="tablist">
-    <button class="tabswitch-btn active" data-tab="live" role="tab" aria-selected="true">Live</button>
-    <button class="tabswitch-btn" data-tab="map" role="tab" aria-selected="false">Map</button>
-    <span class="tabswitch-indicator" id="tabIndicator"></span>
-  </div>
-
-  <!-- ============ STATUS ROW ============ -->
-  <div class="status-row" id="statusRow">
-    <div class="status-chip" id="statusGps" data-state="searching">
-      <span class="status-dot"></span><span class="status-label">GPS</span><span class="status-value">SØGER</span>
-    </div>
-    <div class="status-chip" id="statusPower" data-state="off">
-      <span class="status-dot"></span><span class="status-label">POWER</span><span class="status-value">FRA</span>
-    </div>
-    <div class="status-chip" id="statusHr" data-state="off">
-      <span class="status-dot"></span><span class="status-label">PULS</span><span class="status-value">FRA</span>
-    </div>
-    <div class="status-chip" id="statusSpeed" data-state="off">
-      <span class="status-dot"></span><span class="status-label">SPEED</span><span class="status-value">FRA</span>
-    </div>
-    <div class="status-chip" id="statusCadence" data-state="off">
-      <span class="status-dot"></span><span class="status-label">KAD</span><span class="status-value">FRA</span>
-    </div>
-    <div class="status-chip" id="statusRadar" data-state="off">
-      <span class="status-dot"></span><span class="status-label">RADAR</span><span class="status-value">FRA</span>
-    </div>
-    <div class="status-chip status-chip-batt" id="statusBattery" hidden>
-      <span class="status-dot"></span><span class="status-value">--%</span>
-    </div>
-  </div>
-
-  <!-- ============ MAIN SCROLL AREA ============ -->
-  <main class="views" id="views">
-
-    <!-- ---------- LIVE VIEW ---------- -->
-    <section class="view view-live active" id="viewLive">
-
-      <div class="pill-summary">
-        <div class="pill-item">
-          <span class="pill-label">TID</span>
-          <span class="pill-value" id="liveTime">0:00</span>
-        </div>
-        <div class="pill-divider"></div>
-        <div class="pill-item">
-          <span class="pill-label">DISTANCE</span>
-          <span class="pill-value" id="liveDistance">0.0 <small>km</small></span>
+  <main class="dashboard">
+    <header class="dashboard-header">
+      <div class="brand-block">
+        <h1>KICKR <span>Live</span></h1>
+        <div class="active-session">
+          <small>Aktiv træning</small>
+          <strong id="activeWorkoutLabel">Ingen workout valgt</strong>
         </div>
       </div>
 
-      <div class="power-hero">
-        <div class="power-hero-value" id="livePower">--</div>
-        <div class="power-hero-unit">W</div>
+      <div class="header-actions">
+        <div class="connection-pill" aria-live="polite">
+          <button id="connectButton" class="connection-segment connection-action" type="button" aria-label="Forbind eller afbryd KICKR">
+            <span id="statusDot" class="status-dot disconnected"></span>
+            <span class="connection-copy">
+              <span class="connection-kicker">KICKR</span>
+              <strong id="statusText">Ikke forbundet</strong>
+              <small id="deviceText">Tryk for at forbinde</small>
+            </span>
+          </button>
+          <span class="connection-divider" aria-hidden="true"></span>
+          <button id="heartRateConnectButton" class="connection-segment connection-action" type="button" aria-label="Forbind eller afbryd pulsmåler">
+            <span id="heartStatusDot" class="status-dot disconnected"></span>
+            <span class="connection-copy">
+              <span class="connection-kicker">Puls</span>
+              <strong id="heartRateState">Pulsmåler</strong>
+              <small id="heartRateConnectionText">Tryk for at forbinde</small>
+            </span>
+          </button>
+        </div>
+        <div class="header-ride-actions" aria-label="Turkontroller">
+          <button id="stopRideButton" class="danger-button header-ride-button" type="button" hidden disabled>Stop tur</button>
+          <button id="resetButton" class="quiet-button header-ride-button" type="button">Nulstil tur</button>
+        </div>
+        <button id="installButton" class="header-button install-button" type="button" hidden>Installér</button>
+        <button id="settingsButton" class="icon-button" type="button" aria-label="Indstillinger" aria-controls="settingsPanel" aria-expanded="false" title="Indstillinger">⚙</button>
+        <button id="fullscreenButton" class="icon-button" type="button" aria-label="Fuld skærm" title="Fuld skærm">⛶</button>
       </div>
+    </header>
 
-      <div class="metric-grid-main">
-        <div class="metric-card accent-hr">
-          <div class="metric-card-head">
-            <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.35-9.5-8.8C.7 8.7 2 5 5.5 4.2 8 3.6 10 4.8 12 7c2-2.2 4-3.4 6.5-2.8C22 5 23.3 8.7 21.5 12.2 19 16.65 12 21 12 21z"/></svg>
-            <span>PULS</span>
+    <section class="v3-dashboard" aria-label="Bike Workout dashboard">
+      <article class="panel v3-workout-stage">
+        <div class="v3-stage-head">
+          <div>
+            <span class="metric-label">Workout</span>
+            <strong id="workoutPanelTitle">Ingen workout valgt</strong>
           </div>
-          <div class="metric-card-value"><span id="liveHr">--</span><small>bpm</small></div>
-          <svg class="spark" id="sparkHr" viewBox="0 0 100 28" preserveAspectRatio="none"></svg>
-        </div>
-        <div class="metric-card accent-cadence">
-          <div class="metric-card-head">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>
-            <span>KADENCE</span>
+          <div class="v3-stage-meta">
+            <span id="ergStatusText" class="erg-status-text">ERG ikke forbundet</span>
+            <span id="workoutStatePill" class="workout-state-pill">Klar</span>
           </div>
-          <div class="metric-card-value"><span id="liveCadence">--</span><small>rpm</small></div>
-          <svg class="spark" id="sparkCadence" viewBox="0 0 100 28" preserveAspectRatio="none"></svg>
         </div>
-        <div class="metric-card accent-speed">
-          <div class="metric-card-head">
-            <svg viewBox="0 0 24 24"><path d="M4 19a8 8 0 1116 0"/><path d="M12 19l4-6"/></svg>
-            <span>HASTIGHED</span>
+
+        <div class="v3-workout-chart" aria-label="Workout søjler">
+          <div class="v3-chart-topline">
+            <span id="workoutGraphNow">00:00 / --:--</span>
+            <span id="powerZone" class="zone-pill">Venter på data</span>
           </div>
-          <div class="metric-card-value"><span id="liveSpeed">--</span><small>km/h</small></div>
-          <svg class="spark" id="sparkSpeed" viewBox="0 0 100 28" preserveAspectRatio="none"></svg>
+          <div class="v3-graph-shell">
+            <div id="workoutWattScale" class="workout-watt-scale" aria-hidden="true">
+              <span>400 W</span><span>300 W</span><span>200 W</span><span>100 W</span><span>0 W</span>
+            </div>
+            <svg class="workout-graph" viewBox="0 0 600 118" preserveAspectRatio="none" role="img" aria-label="Workout-profil som søjler">
+              <line class="workout-graph-grid" x1="0" y1="8" x2="600" y2="8"/>
+              <line class="workout-graph-grid" x1="0" y1="33" x2="600" y2="33"/>
+              <line class="workout-graph-grid" x1="0" y1="58" x2="600" y2="58"/>
+              <line class="workout-graph-grid" x1="0" y1="83" x2="600" y2="83"/>
+              <line class="workout-graph-grid graph-baseline" x1="0" y1="108" x2="600" y2="108"/>
+              <g id="workoutGraphBlocks"></g>
+              <line id="workoutGraphCursor" class="workout-graph-cursor" x1="0" y1="8" x2="0" y2="106"/>
+              <circle id="workoutGraphCursorDot" class="workout-graph-cursor-dot" cx="0" cy="8" r="4"/>
+            </svg>
+          </div>
         </div>
-      </div>
 
-      <div class="metric-grid-secondary">
-        <div class="metric-card-small">
-          <span class="mcs-label">AVG POWER</span>
-          <span class="mcs-value" id="avgPower">-- <small>W</small></span>
+        <div class="v3-progress-line">
+          <span id="workoutElapsed">00:00</span>
+          <div class="workout-progress"><span id="workoutProgressFill"></span></div>
+          <span id="workoutRemaining">--:--</span>
         </div>
-        <div class="metric-card-small">
-          <span class="mcs-label">MAX POWER</span>
-          <span class="mcs-value" id="maxPower">-- <small>W</small></span>
-        </div>
-        <div class="metric-card-small">
-          <span class="mcs-label">ELEVATION</span>
-          <span class="mcs-value" id="elevation">-- <small>m</small></span>
-        </div>
-        <div class="metric-card-small">
-          <span class="mcs-label">DISTANCE</span>
-          <span class="mcs-value" id="distanceSmall">-- <small>km</small></span>
-        </div>
-      </div>
 
+        <section class="v37-interval-panel">
+          <div class="v37-interval-half current">
+            <span class="interval-kicker"><i id="currentIntervalIcon" class="interval-type-icon">●</i>Nuværende interval</span>
+            <div class="v37-interval-title-row">
+              <strong id="workoutBlockLabel">Ingen aktiv blok</strong>
+              <small><b id="workoutBlockTime">--:--</b> tilbage</small>
+            </div>
+            <div class="v37-watt-row">
+              <div><span>Målwatt</span><strong id="currentIntervalWatts">-- W</strong></div>
+              <div><span>Intervalområde</span><strong id="currentIntervalRange">--</strong></div>
+            </div>
+          </div>
+          <div class="v37-interval-divider"></div>
+          <div class="v37-interval-half next">
+            <span class="interval-kicker"><i id="nextIntervalIcon" class="interval-type-icon">→</i>Næste interval</span>
+            <div class="v37-interval-title-row">
+              <strong id="workoutNextBlock">Importer en workout</strong>
+              <small>Klar til næste skift</small>
+            </div>
+            <div class="v37-watt-row">
+              <div><span>Målwatt</span><strong id="nextIntervalWatts">-- W</strong></div>
+              <div><span>Intervalområde</span><strong id="nextIntervalRange">--</strong></div>
+            </div>
+          </div>
+        </section>
+      </article>
+
+      <aside class="v3-live-column">
+        <article class="panel v3-power-card">
+          <div class="v3-power-head">
+            <span class="metric-label">Aktuel effekt</span>
+            <span id="dataSource" class="data-source">Datakilde: --</span>
+          </div>
+          <div class="power-value"><span id="powerValue">--</span><span class="power-unit">W</span></div>
+          <div class="v3-target-strip">
+            <span id="workoutTargetLabel">Target</span>
+            <strong id="workoutTargetPower">--</strong>
+            <small id="workoutTargetNote">Importer .zwo i indstillinger</small>
+          </div>
+        </article>
+
+        <div class="v3-metric-row">
+          <article class="panel v3-metric-card cadence-card">
+            <div id="cadenceIcon" class="metric-icon cadence-icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48">
+                <circle cx="24" cy="24" r="17"/>
+                <path class="cadence-ticks" d="M24 9v5M39 24h-5M24 39v-5M9 24h5"/>
+                <path class="cadence-needle" d="M24 24l10-9"/>
+                <circle class="cadence-hub" cx="24" cy="24" r="3"/>
+              </svg>
+            </div>
+            <div class="metric-copy"><span class="metric-label">Kadence</span><div class="v3-metric-value"><span id="cadenceValue">--</span></div></div>
+            <div class="v3-mini-track"><span id="cadenceRing"></span></div>
+          </article>
+          <article class="panel v3-metric-card pulse-card">
+            <div id="heartPulseIcon" class="metric-icon pulse-icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48"><path class="heart-shape" d="M24 40S7 30 7 17.5C7 10.5 15.5 7 24 15c8.5-8 17-4.5 17 2.5C41 30 24 40 24 40Z"/><path class="heart-ecg" d="M10 24h8l3-7 5 14 4-7h8"/></svg>
+            </div>
+            <div class="metric-copy"><span class="metric-label">Puls</span><div class="v3-metric-value"><span id="heartRateValue">--</span></div></div>
+            <div class="v3-mini-track"><span id="heartRateRing"></span></div>
+          </article>
+        </div>
+
+        <article class="panel v37-heart-chart-panel">
+          <div class="v37-heart-chart-head">
+            <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20S3.5 15 3.5 8.8C3.5 5.4 7.6 3.6 12 7.5c4.4-3.9 8.5-2.1 8.5 1.3C20.5 15 12 20 12 20Z"/><path d="M5.5 12h4l1.4-3.2 2.3 6.2 1.8-3h3.5"/></svg>Puls over tid</span>
+            <strong><span id="heartChartAverage">--</span> gns.</strong>
+          </div>
+          <div class="v37-heart-chart-wrap">
+            <div class="v37-heart-axis"><span>200</span><span>160</span><span>120</span><span>80</span></div>
+            <svg class="v37-heart-chart" viewBox="0 0 300 88" preserveAspectRatio="none" role="img" aria-label="Pulsgraf for de seneste ti minutter">
+              <defs><linearGradient id="heartChartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ef4767" stop-opacity=".24"/><stop offset="1" stop-color="#ef4767" stop-opacity=".02"/></linearGradient></defs>
+              <line x1="0" y1="6" x2="300" y2="6"/><line x1="0" y1="31" x2="300" y2="31"/><line x1="0" y1="56" x2="300" y2="56"/><line x1="0" y1="82" x2="300" y2="82"/>
+              <path id="heartChartArea" class="heart-chart-area"></path>
+              <path id="heartChartLine" class="heart-chart-line"></path>
+            </svg>
+            <span id="heartChartEmpty" class="v37-heart-chart-empty">Pulsgrafen starter, når der modtages pulsdata</span>
+          </div>
+          <div class="v37-heart-time"><span>-10 min</span><span>Nu</span></div>
+        </article>
+
+        <article class="panel v3-summary-card">
+          <div><span><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 13V8m-3-5h6"/></svg>Tid</span><strong id="elapsedTime">00:00</strong></div>
+          <div><span><svg viewBox="0 0 24 24"><path d="m13 2-7 11h6l-1 9 7-12h-6z"/></svg>Gns.</span><strong><span id="averagePower">--</span> W</strong></div>
+          <div><span><svg viewBox="0 0 24 24"><path d="M4 18 10 9l4 5 2-3 4 7z"/><path d="m8 10 2-3 2 3"/></svg>Maks.</span><strong><span id="maxPower">--</span> W</strong></div>
+          <div><span><svg viewBox="0 0 24 24"><path d="M5 21 9 3m10 18L15 3M7 14h10M8 9h8"/></svg>Distance</span><strong id="distanceValue">0,00 km</strong></div>
+        </article>
+
+        <div class="v3-workout-actions">
+          <button id="workoutStartPauseButton" class="primary-button v3-start-button" type="button" disabled><span class="button-icon">▶</span>Start workout</button>
+          <button id="ergModeButton" class="secondary-button" type="button" disabled><span class="button-icon">⚡</span>ERG fra</button>
+          <button id="workoutResetButton" class="quiet-button" type="button" disabled><span class="button-icon">↻</span>Nulstil</button>
+        </div>
+      </aside>
     </section>
 
-    <!-- ---------- MAP VIEW ---------- -->
-    <section class="view view-map" id="viewMap">
+    <footer class="action-bar">
+      <span id="rideSaveStatus" class="ride-save-status" role="status" aria-live="polite">Klar til ny tur</span>
+    </footer>
 
-      <div class="map-panel">
-        <div id="mapEl" class="map-el"></div>
-        <button id="recenterBtn" class="map-recenter" aria-label="Centrer kort">
-          <svg viewBox="0 0 24 24"><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/><circle cx="12" cy="12" r="5"/></svg>
-        </button>
-        <div class="map-info-card">
-          <div class="map-info-title" id="mapInfoTitle">Sporer rute</div>
-          <div class="map-info-subtitle" id="mapInfoSubtitle">Indlæs GPX for at følge en planlagt rute</div>
-          <div class="map-info-row">
-            <span id="mapDistance">0.0 km</span>
-            <span id="mapSpeed">0.0 km/h</span>
-            <span id="mapAccuracy">GPS --</span>
-          </div>
-          <div class="map-route-row" id="mapRouteRow" hidden>
-            <span id="routeRemaining">Til slut --</span>
-            <span id="routeDeviation">Fra rute --</span>
-          </div>
+    <aside id="settingsPanel" class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsHeading" tabindex="-1" hidden>
+      <div class="settings-header">
+        <div>
+          <p class="eyebrow">KICKR Live</p>
+          <h2 id="settingsHeading">Indstillinger</h2>
         </div>
+        <button id="closeSettingsButton" class="icon-button" type="button" aria-label="Luk indstillinger">×</button>
       </div>
 
-      <div class="metric-grid-map">
-        <div class="metric-card-small">
-          <span class="mcs-label">POWER</span>
-          <span class="mcs-value" id="mapPower">-- <small>W</small></span>
+      <section class="settings-section">
+        <h3>Gem træningsture</h3>
+        <p>Vælg den mappe, hvor afsluttede ture skal gemmes som komplette JSON-filer. Appen husker valget på denne enhed.</p>
+        <div class="history-status-card" aria-live="polite">
+          <strong id="rideFolderStatus">Kontrollerer gemmemappe…</strong>
+          <span>På browsere uden mappevalg downloades filen automatisk.</span>
         </div>
-        <div class="metric-card-small">
-          <span class="mcs-label">PULS</span>
-          <span class="mcs-value" id="mapHr">-- <small>bpm</small></span>
-        </div>
-        <div class="metric-card-small">
-          <span class="mcs-label">HASTIGHED</span>
-          <span class="mcs-value" id="mapSpeedCard">-- <small>km/h</small></span>
-        </div>
-        <div class="metric-card-small">
-          <span class="mcs-label">DISTANCE</span>
-          <span class="mcs-value" id="mapDistanceCard">-- <small>km</small></span>
-        </div>
-        <div class="metric-card-small">
-          <span class="mcs-label">TID</span>
-          <span class="mcs-value" id="mapTime">0:00</span>
-        </div>
-      </div>
+        <button id="chooseRideFolderButton" class="secondary-button wide-button" type="button">Vælg gemmemappe</button>
+      </section>
 
-    </section>
+      <section class="settings-section">
+        <h3>Workout</h3>
+        <p>Importer en MyWhoosh/Zwift <code>.zwo</code>-fil og brug dashboardet som workout-skærm. ERG kan styre KICKR via FTMS, når træneren understøtter Control Point.</p>
+        <label><span>FTP til watt-beregning</span><input id="ftpInput" type="number" min="50" max="500" step="1" inputmode="numeric" value="165"></label>
+        <input id="workoutFileInput" type="file" accept=".zwo,.xml" hidden>
+        <button id="workoutImportButton" class="secondary-button wide-button" type="button">Importer .zwo workout</button>
+        <div class="history-status-card workout-import-status" aria-live="polite">
+          <strong id="workoutImportStatus">Ingen workout importeret</strong>
+          <span id="workoutImportSummary">Workoutboksen erstatter wattgrafen nederst til venstre.</span>
+        </div>
+        <p class="settings-note">ERG starter altid slukket. Slå det til i workout-boksen, når KICKR er forbundet. FreeRide-blokke frigiver ERG, så du selv kan styre watt.</p>
+      </section>
 
-    <aside id="radarPanel" class="radar-panel" data-level="clear" hidden aria-live="polite">
-      <div class="radar-panel-head">
-        <span class="radar-title">RADAR</span>
-        <span id="radarCount" class="radar-count">0</span>
-      </div>
-      <div class="radar-summary">
-        <strong id="radarNearest">FRI</strong>
-        <span id="radarSpeed">-- km/h</span>
-      </div>
-      <div class="radar-track" id="radarTrack">
-        <span class="radar-scale radar-scale-140">140</span>
-        <span class="radar-scale radar-scale-100">100</span>
-        <span class="radar-scale radar-scale-50">50</span>
-        <span class="radar-scale radar-scale-0">0</span>
-        <div class="radar-bike" aria-hidden="true"></div>
-      </div>
-      <div id="radarPanelStatus" class="radar-panel-status">FORBINDER</div>
+
+
+      <section class="settings-section app-update-section">
+        <h3>App og opdatering</h3>
+        <div class="history-status-card app-update-status" aria-live="polite">
+          <strong id="appVersionText">Bike Workout V3.7.2</strong>
+          <span id="appUpdateStatus">Kontrollerer appversion…</span>
+        </div>
+        <button id="appUpdateButton" class="secondary-button wide-button" type="button">Søg efter opdatering</button>
+        <p class="settings-note">Installerede PWA-versioner kontrolleres automatisk. En opdatering genstarter aldrig appen midt i en aktiv tur.</p>
+      </section>
+
+      <section class="settings-section">
+        <h3>Test og fejlfinding</h3>
+        <button id="demoButton" class="secondary-button wide-button" type="button">Start testvisning</button>
+        <p class="settings-note">Testvisningen viser det færdige dashboard med simulerede watt-, kadence- og pulsdata.</p>
+        <details class="debug-card">
+          <summary>Teknisk log</summary>
+          <pre id="debugLog">Klar.</pre>
+        </details>
+      </section>
     </aside>
-
+    <div id="settingsBackdrop" class="settings-backdrop" hidden></div>
   </main>
 
-  <!-- ============ BOTTOM CONTROLS ============ -->
-  <footer class="controls">
-    <button id="startBtn" class="btn btn-start">START TUR</button>
-    <div id="rideControls" class="ride-controls" hidden>
-      <button id="lapBtn" class="btn btn-lap">LAP</button>
-      <button id="pauseBtn" class="btn btn-pause">PAUSE</button>
-      <button id="stopBtn" class="btn btn-stop">STOP</button>
+  <div id="workoutMessageOverlay" class="workout-message-overlay" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <div class="workout-message-card">
+      <span class="workout-message-kicker">Workout kommentar</span>
+      <strong id="workoutMessageTitle">Næste cue</strong>
+      <p id="workoutMessageText"></p>
     </div>
-  </footer>
-
-</div>
-
-<!-- ============ SETTINGS DRAWER ============ -->
-<div id="settingsDrawer" class="drawer" hidden>
-  <div class="drawer-sheet">
-    <div class="drawer-handle"></div>
-    <div class="drawer-header">
-      <h2>Indstillinger</h2>
-      <button id="closeDrawerBtn" class="drawer-close-btn" type="button" aria-label="Luk indstillinger">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
-    </div>
-
-    <div class="drawer-row">
-      <span>Powermeter</span>
-      <button id="connectPowerBtn" class="btn-mini">Forbind</button>
-    </div>
-    <div class="drawer-row">
-      <span>Pulsmåler</span>
-      <button id="connectHrBtn" class="btn-mini">Forbind</button>
-    </div>
-
-    <div class="drawer-section-title">Bagudrettet radar</div>
-    <div class="drawer-row">
-      <div>
-        <span>Garmin Varia radar</span>
-        <small>RVR315 og kompatible BLE-radarer</small>
-      </div>
-      <button id="connectRadarBtn" class="btn-mini">Forbind</button>
-    </div>
-    <div class="drawer-row">
-      <span>Lydalarm</span>
-      <label class="switch"><input type="checkbox" id="radarSoundToggle" checked><span class="switch-track"></span></label>
-    </div>
-    <div class="drawer-row">
-      <span>Vibration</span>
-      <label class="switch"><input type="checkbox" id="radarVibrationToggle" checked><span class="switch-track"></span></label>
-    </div>
-    <div class="drawer-row">
-      <span>Test radarvisning</span>
-      <button id="testRadarBtn" class="btn-mini">Test</button>
-    </div>
-    <div class="drawer-help">Radarvisningen er et ekstra hjælpemiddel. Kig stadig bagud og vurder trafikken selv.</div>
-
-    <div class="drawer-section-title">Speed / kadence</div>
-    <div class="drawer-row">
-      <span>Speed sensor</span>
-      <button id="connectSpeedBtn" class="btn-mini">Forbind</button>
-    </div>
-    <div class="drawer-row">
-      <span>Kadence sensor</span>
-      <button id="connectCadenceBtn" class="btn-mini">Forbind</button>
-    </div>
-    <div class="drawer-row drawer-row-input">
-      <div>
-        <span>Hjulomkreds</span>
-        <small>700x25c er typisk ca. 2105 mm</small>
-      </div>
-      <label class="number-input-wrap"><input id="wheelCircumferenceInput" class="number-input" type="number" inputmode="numeric" min="500" max="3200" step="1" value="2105"><span>mm</span></label>
-    </div>
-    <div class="drawer-help">Speed sensor bruges til hastighed og distance, når den er forbundet. GPS bruges stadig til kort og højde.</div>
-
-    <div class="drawer-section-title">GPS / adfærd</div>
-    <div class="drawer-row">
-      <span>GPS-status</span>
-      <span id="drawerGpsStatus" class="drawer-value">Søger…</span>
-    </div>
-    <div class="drawer-row">
-      <span>Auto dim-tilstand</span>
-      <label class="switch"><input type="checkbox" id="autoDimToggle" checked><span class="switch-track"></span></label>
-    </div>
-    <div class="drawer-row">
-      <span>Auto-pause</span>
-      <label class="switch"><input type="checkbox" id="autoPauseToggle" checked><span class="switch-track"></span></label>
-    </div>
-
-    <div class="drawer-section-title">Rute</div>
-    <div class="drawer-row">
-      <span>GPX-rute</span>
-      <button id="importGpxBtn" class="btn-mini">Indlæs</button>
-    </div>
-    <div class="drawer-row">
-      <span>Aktiv rute</span>
-      <span id="routeStatus" class="drawer-value">Ingen rute</span>
-    </div>
-    <div class="drawer-row drawer-row-split">
-      <button id="fitRouteBtn" class="btn-mini">Vis hele ruten</button>
-      <button id="clearRouteBtn" class="btn-mini btn-mini-danger">Fjern rute</button>
-    </div>
-
-    <div class="drawer-section-title">System</div>
-    <div class="drawer-row">
-      <span>App version</span>
-      <span id="appVersionLabel" class="drawer-value">Bike Outdoor v10</span>
-    </div>
-    <div class="drawer-row">
-      <div>
-        <span>Opdater app</span>
-        <small>Henter nyeste filer og rydder gammel PWA-cache</small>
-      </div>
-      <button id="forceUpdateBtn" class="btn-mini btn-mini-update" type="button">Opdater</button>
-    </div>
-
-    <div class="drawer-section-title">Data</div>
-    <div class="drawer-row">
-      <span>Eksportér seneste tur</span>
-      <button id="exportLastBtn" class="btn-mini">Eksportér</button>
-    </div>
-    <div class="drawer-row">
-      <span>Ryd ufærdig tur</span>
-      <button id="clearUnfinishedBtn" class="btn-mini btn-mini-danger">Ryd</button>
-    </div>
-    <div class="drawer-row drawer-row-about">
-      <span>Om / begrænsninger</span>
-      <button id="aboutBtn" class="btn-mini">Vis</button>
-    </div>
-
   </div>
-</div>
 
-<!-- ============ MODAL: unfinished ride ============ -->
-<div id="recoveryModal" class="modal" hidden>
-  <div class="modal-sheet">
-    <h2>Ufærdig tur fundet</h2>
-    <p>Bike Outdoor lukkede med en tur i gang. Hvad vil du gøre?</p>
-    <button id="recoveryResumeBtn" class="btn btn-start">Genoptag tur</button>
-    <button id="recoveryExportBtn" class="btn btn-lap">Eksportér tur</button>
-    <button id="recoveryDiscardBtn" class="btn btn-stop">Slet tur</button>
-  </div>
-</div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<!-- ============ MODAL: confirm stop ============ -->
-<div id="stopModal" class="modal" hidden>
-  <div class="modal-sheet">
-    <h2>Afslut tur?</h2>
-    <p>Turen bliver gemt og kan eksporteres bagefter.</p>
-    <button id="stopConfirmBtn" class="btn btn-stop">AFSLUT TUR</button>
-    <button id="stopCancelBtn" class="btn btn-lap">Fortsæt turen</button>
-  </div>
-</div>
-
-<!-- ============ MODAL: finished ride export ============ -->
-<div id="exportModal" class="modal" hidden>
-  <div class="modal-sheet">
-    <h2>Tur afsluttet</h2>
-    <div id="exportSummary" class="export-summary"></div>
-    <button id="exportDownloadBtn" class="btn btn-start">EKSPORTÉR JSON</button>
-    <button id="exportCloseBtn" class="btn btn-lap">Luk</button>
-  </div>
-</div>
-
-<!-- ============ MODAL: about ============ -->
-<div id="aboutModal" class="modal" hidden>
-  <div class="modal-sheet">
-    <h2>Om Bike Outdoor</h2>
-    <p class="about-text">Bike Outdoor er en statisk PWA uden backend, login eller cloud. Data gemmes kun lokalt på enheden og eksporteres som JSON til Training-appen.</p>
-    <p class="about-version"><strong>Version:</strong> <span>Bike Outdoor v10 · Garmin Varia radar</span></p>
-    <ul class="about-list">
-      <li>Web Bluetooth kræver en understøttet Android-browser (fx Chrome).</li>
-      <li>Speed/kadence-sensorer skal sende Bluetooth LE Cycling Speed and Cadence.</li>
-      <li>Radarunderstøttelsen bruger Garmin Varias BLE-radarstream og skal testes på den konkrete enhed.</li>
-      <li>Radaren er et supplement og erstatter ikke opmærksomhed eller et blik bagud.</li>
-      <li>GPS kræver lokationstilladelse.</li>
-      <li>Tracking forventes at køre, mens appen er åben og synlig.</li>
-      <li>Baggrunds-/låst skærm-tracking kan være upålidelig i en browser.</li>
-      <li>En native Android-app ville give mere pålidelig baggrundstracking.</li>
-      <li>Kortfliser kræver internet, medmindre de allerede er cachet.</li>
-      <li>Appen bruger ikke Home Assistant.</li>
-    </ul>
-    <button id="aboutCloseBtn" class="btn btn-lap">Luk</button>
-  </div>
-</div>
-
-<input id="gpxFileInput" type="file" accept=".gpx,application/gpx+xml,text/xml,application/xml" hidden />
-
-<div id="toast" class="toast" hidden></div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script type="module" src="app.js"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
